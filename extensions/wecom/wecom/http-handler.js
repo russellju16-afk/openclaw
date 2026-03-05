@@ -22,6 +22,7 @@ import {
   getMessageStreamKey,
   handleStreamError,
 } from "./stream-utils.js";
+import { MessageDeduplicator } from "../utils.js";
 import { normalizeWebhookPath } from "./webhook-targets.js";
 
 /** Maximum allowed request body size for Bot mode POST (1 MB). */
@@ -31,9 +32,7 @@ const MAX_BOT_BODY_SIZE = 1 * 1024 * 1024;
  * Shared deduplicator instance — persists across requests so that
  * duplicate message IDs are correctly suppressed.
  */
-const sharedDeduplicator = new (
-  await import("../utils.js")
-).MessageDeduplicator();
+const sharedDeduplicator = new MessageDeduplicator();
 
 export async function wecomHttpHandler(req, res) {
   const url = new URL(req.url || "", "http://localhost");
