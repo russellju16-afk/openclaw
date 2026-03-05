@@ -61,7 +61,8 @@ export function setEnsureDynamicAgentWriteQueue(queuePromise) {
 export function resolveAgentConfig(accountId) {
   const config = getOpenclawConfig();
   // Determine effective accountId: explicit param > async context > default.
-  const effectiveId = accountId || streamContext.getStore()?.accountId || undefined;
+  const effectiveId =
+    accountId || streamContext.getStore()?.accountId || undefined;
   return resolveAgentConfigForAccount(config, effectiveId);
 }
 
@@ -76,13 +77,14 @@ export function resolveAgentConfig(accountId) {
  */
 export function resolveWebhookUrl(name, accountId) {
   const config = getOpenclawConfig();
-  const effectiveId = accountId || streamContext.getStore()?.accountId || undefined;
+  const effectiveId =
+    accountId || streamContext.getStore()?.accountId || undefined;
   const account = resolveAccount(config, effectiveId);
   const webhooks = account?.config?.webhooks;
   if (!webhooks || !webhooks[name]) return null;
   const value = webhooks[name];
   if (value.startsWith("http")) return value;
-  return `${WEBHOOK_BOT_SEND_URL}?key=${value}`;
+  return `${WEBHOOK_BOT_SEND_URL}?key=${encodeURIComponent(value)}`;
 }
 
 export function buildKfPeerKey(accountId, openKfId, externalUserId) {
