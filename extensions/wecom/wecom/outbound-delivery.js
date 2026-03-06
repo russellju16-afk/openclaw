@@ -2,16 +2,12 @@ import { readFile, access, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { logger } from "../logger.js";
 import { streamManager } from "../stream-manager.js";
-import {
-  agentSendText,
-  agentUploadMedia,
-  agentSendMedia,
-} from "./agent-api.js";
+import { agentSendText, agentUploadMedia, agentSendMedia } from "./agent-api.js";
+import { THINKING_PLACEHOLDER } from "./constants.js";
 import { parseResponseUrlResult } from "./response-url.js";
 import { resolveAgentConfig, responseUrls, streamContext } from "./state.js";
 import { resolveActiveStream } from "./stream-utils.js";
 import { resolveAgentWorkspaceDirLocal } from "./workspace-template.js";
-import { THINKING_PLACEHOLDER } from "./constants.js";
 
 // WeCom upload API rejects files smaller than 5 bytes (error 40006).
 const WECOM_MIN_FILE_SIZE = 5;
@@ -25,10 +21,7 @@ const WECOM_MIN_FILE_SIZE = 5;
 function resolveHostPath(filePath, effectiveAgentId) {
   if (effectiveAgentId && filePath.startsWith("/workspace/")) {
     const relative = filePath.slice("/workspace/".length);
-    const hostPath = join(
-      resolveAgentWorkspaceDirLocal(effectiveAgentId),
-      relative,
-    );
+    const hostPath = join(resolveAgentWorkspaceDirLocal(effectiveAgentId), relative);
     logger.debug("Resolved sandbox path to host path", {
       sandbox: filePath,
       host: hostPath,
@@ -72,13 +65,7 @@ function isAllowedRemoteUrl(url) {
  * read the content and send as a text message instead.
  * Returns a user-facing hint string.
  */
-async function uploadAndSendFile({
-  hostPath,
-  filename,
-  agent,
-  senderId,
-  streamId,
-}) {
+async function uploadAndSendFile({ hostPath, filename, agent, senderId, streamId }) {
   const fileBuf = await readFile(hostPath);
   if (fileBuf.length < WECOM_MIN_FILE_SIZE) {
     // File too small for WeCom upload — send content inline as text.
@@ -116,13 +103,7 @@ async function uploadAndSendFile({
   return `📎 文件「${filename}」已通过私信发送给您`;
 }
 
-export async function deliverWecomReply({
-  payload,
-  senderId,
-  streamId,
-  agentId,
-  responseKey,
-}) {
+export async function deliverWecomReply({ payload, senderId, streamId, agentId, responseKey }) {
   const text = payload.text || "";
   // responseKey is used for stream/response_url lookup:
   // - DM: senderId
@@ -173,9 +154,7 @@ export async function deliverWecomReply({
           streamId,
           path: resolvedMediaPath,
         });
-        processedText = processedText
-          .replace(media.fullMatch, "⚠️ 文件路径不允许访问")
-          .trim();
+        processedText = processedText.replace(media.fullMatch, "⚠️ 文件路径不允许访问").trim();
         continue;
       }
       const mediaExt = resolvedMediaPath.split(".").pop()?.toLowerCase() || "";
@@ -211,27 +190,18 @@ export async function deliverWecomReply({
             });
           } catch (mediaErr) {
             processedText = processedText
-              .replace(
-                media.fullMatch,
-                `⚠️ 文件发送失败（${mediaFilename}）：${mediaErr.message}`,
-              )
+              .replace(media.fullMatch, `⚠️ 文件发送失败（${mediaFilename}）：${mediaErr.message}`)
               .trim();
-            logger.error(
-              "Failed to send non-image file via Agent DM (MEDIA line)",
-              {
-                streamId,
-                filename: mediaFilename,
-                error: mediaErr.message,
-              },
-            );
+            logger.error("Failed to send non-image file via Agent DM (MEDIA line)", {
+              streamId,
+              filename: mediaFilename,
+              error: mediaErr.message,
+            });
           }
         } else {
           // No agent configured or no sender — just strip the MEDIA line.
           processedText = processedText
-            .replace(
-              media.fullMatch,
-              `⚠️ 无法发送文件 ${mediaFilename}（未配置 Agent API）`,
-            )
+            .replace(media.fullMatch, `⚠️ 无法发送文件 ${mediaFilename}（未配置 Agent API）`)
             .trim();
         }
       }
@@ -240,17 +210,9 @@ export async function deliverWecomReply({
 
   // Handle payload.mediaUrl / payload.mediaUrls from OpenClaw core dispatcher.
   // These are local file paths or remote URLs that the LLM wants to deliver as media.
-  const payloadMediaUrls =
-    payload.mediaUrls || (payload.mediaUrl ? [payload.mediaUrl] : []);
+  const payloadMediaUrls = payload.mediaUrls || (payload.mediaUrl ? [payload.mediaUrl] : []);
   if (payloadMediaUrls.length > 0) {
-    const payloadImageExts = new Set([
-      "jpg",
-      "jpeg",
-      "png",
-      "gif",
-      "bmp",
-      "webp",
-    ]);
+    const payloadImageExts = new Set(["jpg", "jpeg", "png", "gif", "bmp", "webp"]);
     for (const mediaPath of payloadMediaUrls) {
       // Normalize sandbox: prefix
       let absPath = mediaPath;
@@ -346,9 +308,7 @@ export async function deliverWecomReply({
             if (streamId && streamManager.hasStream(streamId)) {
               streamManager.appendStream(streamId, `\n\n${hint}`);
             } else {
-              processedText = processedText
-                ? `${processedText}\n\n${hint}`
-                : hint;
+              processedText = processedText ? `${processedText}\n\n${hint}` : hint;
             }
             logger.info("Sent payload media via Agent DM", {
               streamId,
@@ -365,9 +325,7 @@ export async function deliverWecomReply({
             if (streamId && streamManager.hasStream(streamId)) {
               streamManager.appendStream(streamId, `\n\n${errHint}`);
             } else {
-              processedText = processedText
-                ? `${processedText}\n\n${errHint}`
-                : errHint;
+              processedText = processedText ? `${processedText}\n\n${errHint}` : errHint;
             }
           }
         } else {
@@ -375,9 +333,7 @@ export async function deliverWecomReply({
           if (streamId && streamManager.hasStream(streamId)) {
             streamManager.appendStream(streamId, `\n\n${noAgentHint}`);
           } else {
-            processedText = processedText
-              ? `${processedText}\n\n${noAgentHint}`
-              : noAgentHint;
+            processedText = processedText ? `${processedText}\n\n${noAgentHint}` : noAgentHint;
           }
         }
       }
@@ -408,14 +364,7 @@ export async function deliverWecomReply({
     if (detectedPaths.length > 0) {
       const workspaceDir = resolveAgentWorkspaceDirLocal(effectiveAgentId);
       const agentCfgAuto = resolveAgentConfig();
-      const imageExtsAuto = new Set([
-        "jpg",
-        "jpeg",
-        "png",
-        "gif",
-        "bmp",
-        "webp",
-      ]);
+      const imageExtsAuto = new Set(["jpg", "jpeg", "png", "gif", "bmp", "webp"]);
 
       for (const wsPath of detectedPaths) {
         // /workspace/foo.pdf → hostDir/foo.pdf
@@ -432,13 +381,10 @@ export async function deliverWecomReply({
         try {
           await access(hostPath);
         } catch {
-          logger.debug(
-            "Auto-detect: workspace file not found on host, skipping",
-            {
-              wsPath,
-              hostPath,
-            },
-          );
+          logger.debug("Auto-detect: workspace file not found on host, skipping", {
+            wsPath,
+            hostPath,
+          });
           continue;
         }
 
@@ -456,8 +402,9 @@ export async function deliverWecomReply({
             // Also strip any preceding "MEDIA:" prefix if the LLM wrote "MEDIA:/workspace/…".
             const escapedPath = wsPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
             const withMediaPrefix = new RegExp(`MEDIA:\\s*${escapedPath}`, "g");
-            if (withMediaPrefix.test(processedText)) {
-              processedText = processedText.replace(withMediaPrefix, hint);
+            const replaced = processedText.replace(withMediaPrefix, hint);
+            if (replaced !== processedText) {
+              processedText = replaced;
             } else {
               processedText = processedText.replace(wsPath, hint);
             }
@@ -473,15 +420,12 @@ export async function deliverWecomReply({
               wsPath,
               `⚠️ 文件「${filename}」发送失败：${autoErr.message}`,
             );
-            logger.error(
-              "Auto-detect: failed to send workspace file via Agent DM",
-              {
-                streamId,
-                wsPath,
-                hostPath,
-                error: autoErr.message,
-              },
-            );
+            logger.error("Auto-detect: failed to send workspace file via Agent DM", {
+              streamId,
+              wsPath,
+              hostPath,
+              error: autoErr.message,
+            });
           }
         }
       }
@@ -503,19 +447,18 @@ export async function deliverWecomReply({
 
     // If stream still has the placeholder, replace it entirely.
     if (stream.content.trim() === THINKING_PLACEHOLDER.trim()) {
-      streamManager.replaceIfPlaceholder(
-        targetStreamId,
-        content,
-        THINKING_PLACEHOLDER,
-      );
+      streamManager.replaceIfPlaceholder(targetStreamId, content, THINKING_PLACEHOLDER);
       return true;
     }
 
     // Skip duplicate chunks (for example, block + final overlap).
-    if (stream.content.includes(content.trim())) {
+    // Only check substring containment for chunks long enough to avoid
+    // false positives (short replies like "好的" matching inside longer text).
+    const trimmed = content.trim();
+    if (trimmed.length >= 20 && stream.content.includes(trimmed)) {
       logger.debug("WeCom: duplicate content, skipping", {
         streamId: targetStreamId,
-        contentPreview: content.substring(0, 30),
+        contentPreview: trimmed.substring(0, 30),
       });
       return true;
     }
@@ -568,30 +511,24 @@ export async function deliverWecomReply({
         const responseBody = await response.text().catch(() => "");
         const result = parseResponseUrlResult(response, responseBody);
         if (!result.accepted) {
-          logger.error(
-            "WeCom: response_url fallback rejected (deliverWecomReply)",
-            {
-              senderId,
-              deliveryKey,
-              status: response.status,
-              statusText: response.statusText,
-              errcode: result.errcode,
-              errmsg: result.errmsg,
-              bodyPreview: result.bodyPreview,
-            },
-          );
+          logger.error("WeCom: response_url fallback rejected (deliverWecomReply)", {
+            senderId,
+            deliveryKey,
+            status: response.status,
+            statusText: response.statusText,
+            errcode: result.errcode,
+            errmsg: result.errmsg,
+            bodyPreview: result.bodyPreview,
+          });
         } else {
           saved.used = true;
-          logger.info(
-            "WeCom: sent via response_url fallback (deliverWecomReply)",
-            {
-              senderId,
-              deliveryKey,
-              status: response.status,
-              errcode: result.errcode,
-              contentPreview: processedText.substring(0, 50),
-            },
-          );
+          logger.info("WeCom: sent via response_url fallback (deliverWecomReply)", {
+            senderId,
+            deliveryKey,
+            status: response.status,
+            errcode: result.errcode,
+            contentPreview: processedText.substring(0, 50),
+          });
           return;
         }
       } catch (err) {

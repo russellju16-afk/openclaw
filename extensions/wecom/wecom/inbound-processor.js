@@ -15,11 +15,7 @@ import {
   isWecomAdmin,
 } from "./commands.js";
 import { THINKING_PLACEHOLDER } from "./constants.js";
-import {
-  downloadAndDecryptImage,
-  downloadWecomFile,
-  guessMimeType,
-} from "./media.js";
+import { downloadAndDecryptImage, downloadWecomFile, guessMimeType } from "./media.js";
 import { deliverWecomReply } from "./outbound-delivery.js";
 import {
   dispatchLocks,
@@ -29,11 +25,7 @@ import {
   streamContext,
   streamMeta,
 } from "./state.js";
-import {
-  handleStreamError,
-  registerActiveStream,
-  unregisterActiveStream,
-} from "./stream-utils.js";
+import { handleStreamError, registerActiveStream, unregisterActiveStream } from "./stream-utils.js";
 import { ensureDynamicAgentListed } from "./workspace-template.js";
 
 /**
@@ -70,10 +62,7 @@ export function flushMessageBuffer(streamKey, target) {
     if (singleImages.length > 0 && !primaryMsg.imageUrl) {
       primaryMsg.imageUrl = singleImages[0];
       if (singleImages.length > 1) {
-        primaryMsg.imageUrls = [
-          ...(primaryMsg.imageUrls || []),
-          ...singleImages.slice(1),
-        ];
+        primaryMsg.imageUrls = [...(primaryMsg.imageUrls || []), ...singleImages.slice(1)];
       }
     }
 
@@ -85,9 +74,17 @@ export function flushMessageBuffer(streamKey, target) {
         "消息已合并到第一条回复中。",
         THINKING_PLACEHOLDER,
       );
-      streamManager.finishStream(extraStreamId).then(() => {
-        unregisterActiveStream(streamKey, extraStreamId);
-      });
+      streamManager
+        .finishStream(extraStreamId)
+        .then(() => {
+          unregisterActiveStream(streamKey, extraStreamId);
+        })
+        .catch((err) => {
+          logger.error("Failed to finish extra stream", {
+            extraStreamId,
+            error: err.message,
+          });
+        });
     }
 
     logger.info("WeCom: flushing merged messages", {
@@ -113,11 +110,7 @@ export function flushMessageBuffer(streamKey, target) {
     config: target.config,
   }).catch(async (err) => {
     logger.error("WeCom message processing failed", { error: err.message });
-    await handleStreamError(
-      primaryStreamId,
-      streamKey,
-      "处理消息时出错，请稍后再试。",
-    );
+    await handleStreamError(primaryStreamId, streamKey, "处理消息时出错，请稍后再试。");
   });
 }
 
@@ -146,9 +139,7 @@ export async function processInboundMessage({
   // Use chat id for group sessions and sender id for direct messages.
   const peerId = isGroupChat ? chatId : senderId;
   const peerKind = isGroupChat ? "group" : "dm";
-  const conversationId = isGroupChat
-    ? `wecom:group:${chatId}`
-    : `wecom:${senderId}`;
+  const conversationId = isGroupChat ? `wecom:group:${chatId}` : `wecom:${senderId}`;
 
   // Track active stream by chat context for outbound adapter callbacks.
   // Prefix with accountId so multi-account setups don't share debounce buffers
@@ -191,11 +182,7 @@ export async function processInboundMessage({
         senderId,
       });
       if (streamId) {
-        streamManager.replaceIfPlaceholder(
-          streamId,
-          "请@提及我以获取回复。",
-          THINKING_PLACEHOLDER,
-        );
+        streamManager.replaceIfPlaceholder(streamId, "请@提及我以获取回复。", THINKING_PLACEHOLDER);
         await streamManager.finishStream(streamId);
         unregisterActiveStream(streamKey, streamId);
       }
@@ -216,8 +203,7 @@ export async function processInboundMessage({
   // quoted content so the LLM sees the full conversational context.
   const quote = message.quote;
   if (quote && quote.content) {
-    const quoteLabel =
-      quote.msgType === "image" ? "[引用图片]" : `> ${quote.content}`;
+    const quoteLabel = quote.msgType === "image" ? "[引用图片]" : `> ${quote.content}`;
     rawBody = `${quoteLabel}\n\n${rawBody}`;
     logger.debug("WeCom: prepended quoted message context", {
       quoteType: quote.msgType,
@@ -253,11 +239,7 @@ export async function processInboundMessage({
 
     // Send blocked-command response through the same stream.
     if (streamId) {
-      streamManager.replaceIfPlaceholder(
-        streamId,
-        cmdConfig.blockMessage,
-        THINKING_PLACEHOLDER,
-      );
+      streamManager.replaceIfPlaceholder(streamId, cmdConfig.blockMessage, THINKING_PLACEHOLDER);
       await streamManager.finishStream(streamId);
       unregisterActiveStream(streamKey, streamId);
     }
@@ -281,8 +263,7 @@ export async function processInboundMessage({
     command: commandCheck.command,
   });
 
-  const highPriorityCommand =
-    commandCheck.isCommand && isHighPriorityCommand(commandCheck.command);
+  const highPriorityCommand = commandCheck.isCommand && isHighPriorityCommand(commandCheck.command);
 
   // ========================================================================
   // Dynamic agent routing
@@ -292,8 +273,7 @@ export async function processInboundMessage({
 
   // Compute deterministic agent target for this conversation.
   const targetAgentId =
-    dynamicConfig.enabled &&
-    shouldUseDynamicAgent({ chatType: peerKind, config: account.config })
+    dynamicConfig.enabled && shouldUseDynamicAgent({ chatType: peerKind, config: account.config })
       ? generateAgentId(peerKind, peerId, account.accountId)
       : null;
 
@@ -385,11 +365,7 @@ export async function processInboundMessage({
 
     for (const url of allImageUrls) {
       try {
-        const result = await downloadAndDecryptImage(
-          url,
-          account.encodingAesKey,
-          account.token,
-        );
+        const result = await downloadAndDecryptImage(url, account.encodingAesKey, account.token);
         mediaPaths.push(result.localPath);
         mediaTypes.push(result.mimeType);
       } catch (e) {
@@ -418,8 +394,7 @@ export async function processInboundMessage({
     // For image-only messages (no text), set a placeholder body.
     if (!rawBody.trim()) {
       const count = allImageUrls.length;
-      ctxBase.Body =
-        count > 1 ? `[用户发送了${count}张图片]` : "[用户发送了一张图片]";
+      ctxBase.Body = count > 1 ? `[用户发送了${count}张图片]` : "[用户发送了一张图片]";
       ctxBase.RawBody = "[图片]";
       ctxBase.CommandBody = "";
     }
@@ -428,18 +403,14 @@ export async function processInboundMessage({
   // Handle file attachment.
   if (fileUrl) {
     try {
-      const { localPath: localFilePath, effectiveFileName } =
-        await downloadWecomFile(
-          fileUrl,
-          fileName,
-          account.encodingAesKey,
-          account.token,
-        );
+      const { localPath: localFilePath, effectiveFileName } = await downloadWecomFile(
+        fileUrl,
+        fileName,
+        account.encodingAesKey,
+        account.token,
+      );
       ctxBase.MediaPaths = [...(ctxBase.MediaPaths || []), localFilePath];
-      ctxBase.MediaTypes = [
-        ...(ctxBase.MediaTypes || []),
-        guessMimeType(effectiveFileName),
-      ];
+      ctxBase.MediaTypes = [...(ctxBase.MediaTypes || []), guessMimeType(effectiveFileName)];
       logger.info("File attachment prepared", {
         path: localFilePath,
         name: effectiveFileName,
@@ -556,20 +527,14 @@ export async function processInboundMessage({
                   agentId: route.agentId,
                 });
               } catch (deliverErr) {
-                logger.error(
-                  "WeCom: deliverWecomReply threw, continuing to finalize stream",
-                  {
-                    streamId,
-                    error: deliverErr.message,
-                  },
-                );
+                logger.error("WeCom: deliverWecomReply threw, continuing to finalize stream", {
+                  streamId,
+                  error: deliverErr.message,
+                });
               }
 
               // Mark stream meta when main response is done.
-              if (
-                streamId &&
-                (info.kind === "final" || info.kind === "block")
-              ) {
+              if (streamId && (info.kind === "final" || info.kind === "block")) {
                 const prevMeta = streamMeta.get(streamId) || {};
                 streamMeta.set(streamId, {
                   ...prevMeta,
@@ -588,11 +553,7 @@ export async function processInboundMessage({
                 error: err.message,
                 kind: info.kind,
               });
-              await handleStreamError(
-                streamId,
-                streamKey,
-                "处理消息时出错，请稍后再试。",
-              );
+              await handleStreamError(streamId, streamKey, "处理消息时出错，请稍后再试。");
             },
           },
         });
@@ -631,11 +592,7 @@ export async function processInboundMessage({
         streamKey,
         error: err.message,
       });
-      await handleStreamError(
-        streamId,
-        streamKey,
-        "处理消息时出错，请稍后再试。",
-      );
+      await handleStreamError(streamId, streamKey, "处理消息时出错，请稍后再试。");
     }
     return;
   }
@@ -648,11 +605,7 @@ export async function processInboundMessage({
       streamKey,
       error: err.message,
     });
-    await handleStreamError(
-      streamId,
-      streamKey,
-      "处理消息时出错，请稍后再试。",
-    );
+    await handleStreamError(streamId, streamKey, "处理消息时出错，请稍后再试。");
   });
 
   dispatchLocks.set(streamKey, currentDispatch);
