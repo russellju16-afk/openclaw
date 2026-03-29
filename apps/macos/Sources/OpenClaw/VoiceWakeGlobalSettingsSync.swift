@@ -11,6 +11,7 @@ final class VoiceWakeGlobalSettingsSync {
 
     private struct VoiceWakePayload: Codable, Equatable {
         let triggers: [String]
+        let triggerAgentMap: [String: String]?
     }
 
     func start() {
@@ -43,8 +44,10 @@ final class VoiceWakeGlobalSettingsSync {
 
     private func refreshFromGateway() async {
         do {
-            let triggers = try await GatewayConnection.shared.voiceWakeGetTriggers()
-            AppStateStore.shared.applyGlobalVoiceWakeTriggers(triggers)
+            let config = try await GatewayConnection.shared.voiceWakeGetConfig()
+            AppStateStore.shared.applyGlobalVoiceWakeConfig(
+                triggers: config.triggers,
+                triggerAgentMap: config.triggerAgentMap ?? [:])
         } catch {
             // Best-effort only.
         }
@@ -56,7 +59,9 @@ final class VoiceWakeGlobalSettingsSync {
         guard let payload = evt.payload else { return }
         do {
             let decoded = try GatewayPayloadDecoding.decode(payload, as: VoiceWakePayload.self)
-            AppStateStore.shared.applyGlobalVoiceWakeTriggers(decoded.triggers)
+            AppStateStore.shared.applyGlobalVoiceWakeConfig(
+                triggers: decoded.triggers,
+                triggerAgentMap: decoded.triggerAgentMap ?? [:])
         } catch {
             self.logger.error("failed to decode voicewake.changed: \(error.localizedDescription, privacy: .public)")
         }

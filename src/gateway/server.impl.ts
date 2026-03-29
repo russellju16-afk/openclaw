@@ -227,7 +227,9 @@ function assertValidGatewayStartupConfigSnapshot(
   }
   const issues =
     snapshot.issues.length > 0
-      ? formatConfigIssueLines(snapshot.issues, "", { normalizeRoot: true }).join("\n")
+      ? formatConfigIssueLines(snapshot.issues, "", {
+          normalizeRoot: true,
+        }).join("\n")
       : "Unknown validation issue.";
   const doctorHint = options.includeDoctorHint
     ? `\nRun "${formatCliCommand("openclaw doctor")}" to repair, then retry.`
@@ -384,10 +386,15 @@ export async function startGatewayServer(
 
   configSnapshot = await readConfigFileSnapshot();
   if (configSnapshot.exists) {
-    assertValidGatewayStartupConfigSnapshot(configSnapshot, { includeDoctorHint: true });
+    assertValidGatewayStartupConfigSnapshot(configSnapshot, {
+      includeDoctorHint: true,
+    });
   }
 
-  const autoEnable = applyPluginAutoEnable({ config: configSnapshot.config, env: process.env });
+  const autoEnable = applyPluginAutoEnable({
+    config: configSnapshot.config,
+    env: process.env,
+  });
   if (autoEnable.changes.length > 0) {
     try {
       await writeConfigFile(autoEnable.config);
@@ -425,7 +432,10 @@ export async function startGatewayServer(
   };
   const activateRuntimeSecrets = async (
     config: OpenClawConfig,
-    params: { reason: "startup" | "reload" | "restart-check"; activate: boolean },
+    params: {
+      reason: "startup" | "reload" | "restart-check";
+      activate: boolean;
+    },
   ) =>
     await runWithSecretsActivationLock(async () => {
       try {
@@ -494,7 +504,9 @@ export async function startGatewayServer(
   if (diagnosticsEnabled) {
     startDiagnosticHeartbeat();
   }
-  setGatewaySigusr1RestartPolicy({ allowExternal: isRestartEnabled(cfgAtStart) });
+  setGatewaySigusr1RestartPolicy({
+    allowExternal: isRestartEnabled(cfgAtStart),
+  });
   setPreRestartDeferralCheck(
     () => getTotalQueueSize() + getTotalPendingReplies() + getActiveEmbeddedRunCount(),
   );
@@ -696,8 +708,11 @@ export async function startGatewayServer(
   const nodeSubscribe = nodeSubscriptions.subscribe;
   const nodeUnsubscribe = nodeSubscriptions.unsubscribe;
   const nodeUnsubscribeAll = nodeSubscriptions.unsubscribeAll;
-  const broadcastVoiceWakeChanged = (triggers: string[]) => {
-    broadcast("voicewake.changed", { triggers }, { dropIfSlow: true });
+  const broadcastVoiceWakeChanged = (
+    triggers: string[],
+    triggerAgentMap: Record<string, string>,
+  ) => {
+    broadcast("voicewake.changed", { triggers, triggerAgentMap }, { dropIfSlow: true });
   };
   const hasMobileNodeConnected = () => hasConnectedMobileNode(nodeRegistry);
   applyGatewayLaneConcurrency(cfgAtStart);
@@ -776,7 +791,9 @@ export async function startGatewayServer(
       agentRunSeq,
       nodeSendToSession,
       ...(typeof cfgAtStart.media?.ttlHours === "number"
-        ? { mediaCleanupTtlMs: resolveMediaCleanupTtlMs(cfgAtStart.media.ttlHours) }
+        ? {
+            mediaCleanupTtlMs: resolveMediaCleanupTtlMs(cfgAtStart.media.ttlHours),
+          }
         : {}),
     }));
   }
@@ -866,7 +883,11 @@ export async function startGatewayServer(
           targetIds: new Set(targetIds),
         });
       if (assignments.length === 0) {
-        return { assignments: [] as CommandSecretAssignment[], diagnostics, inactiveRefPaths };
+        return {
+          assignments: [] as CommandSecretAssignment[],
+          diagnostics,
+          inactiveRefPaths,
+        };
       }
       return { assignments, diagnostics, inactiveRefPaths };
     },
@@ -970,8 +991,12 @@ export async function startGatewayServer(
         log,
         isNixMode,
         onUpdateAvailableChange: (updateAvailable) => {
-          const payload: GatewayUpdateAvailableEventPayload = { updateAvailable };
-          broadcast(GATEWAY_EVENT_UPDATE_AVAILABLE, payload, { dropIfSlow: true });
+          const payload: GatewayUpdateAvailableEventPayload = {
+            updateAvailable,
+          };
+          broadcast(GATEWAY_EVENT_UPDATE_AVAILABLE, payload, {
+            dropIfSlow: true,
+          });
         },
       });
   const tailscaleCleanup = minimalTestGateway
@@ -1088,7 +1113,10 @@ export async function startGatewayServer(
             }
           },
           onRestart: async (plan, nextConfig) => {
-            await activateRuntimeSecrets(nextConfig, { reason: "restart-check", activate: false });
+            await activateRuntimeSecrets(nextConfig, {
+              reason: "restart-check",
+              activate: false,
+            });
             requestGatewayRestart(plan, nextConfig);
           },
           log: {

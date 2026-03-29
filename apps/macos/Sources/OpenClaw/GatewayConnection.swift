@@ -42,6 +42,7 @@ struct GatewayAgentInvocation {
     var channel: GatewayAgentChannel = .last
     var timeoutSeconds: Int?
     var idempotencyKey: String = UUID().uuidString
+    var agentId: String?
 }
 
 /// Single, shared Gateway websocket connection for the whole app.
@@ -495,6 +496,9 @@ extension GatewayConnection {
             "channel": AnyCodable(invocation.channel.rawValue),
             "idempotencyKey": AnyCodable(invocation.idempotencyKey),
         ]
+        if let agentId = invocation.agentId {
+            params["agentId"] = AnyCodable(agentId)
+        }
         if let timeout = invocation.timeoutSeconds {
             params["timeout"] = AnyCodable(timeout)
         }
@@ -678,17 +682,29 @@ extension GatewayConnection {
 
     // MARK: - VoiceWake
 
-    func voiceWakeGetTriggers() async throws -> [String] {
-        struct VoiceWakePayload: Decodable { let triggers: [String] }
-        let payload: VoiceWakePayload = try await self.requestDecoded(method: .voicewakeGet)
-        return payload.triggers
+    struct VoiceWakeConfig: Decodable {
+        let triggers: [String]
+        let triggerAgentMap: [String: String]?
     }
 
-    func voiceWakeSetTriggers(_ triggers: [String]) async {
+    func voiceWakeGetConfig() async throws -> VoiceWakeConfig {
+        try await self.requestDecoded(method: .voicewakeGet)
+    }
+
+    func voiceWakeGetTriggers() async throws -> [String] {
+        let config: VoiceWakeConfig = try await self.requestDecoded(method: .voicewakeGet)
+        return config.triggers
+    }
+
+    func voiceWakeSetTriggers(_ triggers: [String], triggerAgentMap: [String: String]? = nil) async {
         do {
+            var params: [String: AnyCodable] = ["triggers": AnyCodable(triggers)]
+            if let map = triggerAgentMap {
+                params["triggerAgentMap"] = AnyCodable(map)
+            }
             try await self.requestVoid(
                 method: .voicewakeSet,
-                params: ["triggers": AnyCodable(triggers)],
+                params: params,
                 timeoutMs: 10000)
         } catch {
             // Best-effort only.

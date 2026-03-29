@@ -37,6 +37,7 @@ actor VoiceWakeRuntime {
     private var listeningState: ListeningState = .idle
     private var overlayToken: UUID?
     private var activeTriggerEndTime: TimeInterval?
+    private var activeTriggerWord: String?
     private var scheduledRestartTask: Task<Void, Never>?
     private var lastLoggedText: String?
     private var lastLoggedAt: Date?
@@ -78,6 +79,7 @@ actor VoiceWakeRuntime {
 
     struct RuntimeConfig: Equatable {
         let triggers: [String]
+        let triggerAgentMap: [String: String]
         let micID: String?
         let localeID: String?
         let triggerChime: VoiceWakeChime
@@ -97,6 +99,7 @@ actor VoiceWakeRuntime {
             let enabled = state.swabbleEnabled
             let config = RuntimeConfig(
                 triggers: sanitizeVoiceWakeTriggers(state.swabbleTriggerWords),
+                triggerAgentMap: state.swabbleTriggerAgentMap,
                 micID: state.voiceWakeMicID.isEmpty ? nil : state.voiceWakeMicID,
                 localeID: state.voiceWakeLocaleID.isEmpty ? nil : state.voiceWakeLocaleID,
                 triggerChime: state.voiceWakeTriggerChime,
@@ -364,7 +367,11 @@ actor VoiceWakeRuntime {
             } else {
                 self.logger.info("voicewake runtime detected len=\(match.command.count)")
             }
-            await self.beginCapture(command: match.command, triggerEndTime: match.triggerEndTime, config: config)
+            await self.beginCapture(
+                command: match.command,
+                triggerEndTime: match.triggerEndTime,
+                triggerWord: match.trigger,
+                config: config)
         } else if !transcript.isEmpty, update.error == nil {
             if self.isTriggerOnly(transcript: transcript, triggers: config.triggers) {
                 self.preDetectTask?.cancel()
@@ -491,8 +498,9 @@ actor VoiceWakeRuntime {
         if let cooldown = self.cooldownUntil, Date() < cooldown {
             return
         }
+        let matchedTrigger = WakeWordGate.firstMatchingTrigger(text: lastText, triggers: triggers)
         self.logger.info("voicewake runtime detected (trigger-only pause)")
-        await self.beginCapture(command: "", triggerEndTime: nil, config: config)
+        await self.beginCapture(command: "", triggerEndTime: nil, triggerWord: matchedTrigger, config: config)
     }
 
     private func isTriggerOnly(transcript: String, triggers: [String]) -> Bool {
@@ -525,10 +533,16 @@ actor VoiceWakeRuntime {
         await self.beginCapture(
             command: match.command,
             triggerEndTime: match.triggerEndTime,
+            triggerWord: match.trigger,
             config: config)
     }
 
-    private func beginCapture(command: String, triggerEndTime: TimeInterval?, config: RuntimeConfig) async {
+    private func beginCapture(
+        command: String,
+        triggerEndTime: TimeInterval?,
+        triggerWord: String?,
+        config: RuntimeConfig) async
+    {
         self.listeningState = .voiceWake
         self.isCapturing = true
         DiagnosticsFileLog.shared.log(category: "voicewake.runtime", event: "beginCapture")
@@ -540,6 +554,7 @@ actor VoiceWakeRuntime {
         self.heardBeyondTrigger = !command.isEmpty
         self.triggerChimePlayed = false
         self.activeTriggerEndTime = triggerEndTime
+        self.activeTriggerWord = triggerWord
         self.preDetectTask?.cancel()
         self.preDetectTask = nil
         self.triggerOnlyTask?.cancel()
@@ -616,6 +631,8 @@ actor VoiceWakeRuntime {
         self.heardBeyondTrigger = false
         self.triggerChimePlayed = false
         self.activeTriggerEndTime = nil
+        let resolvedAgentId = self.activeTriggerWord.flatMap { config.triggerAgentMap[$0] }
+        self.activeTriggerWord = nil
         self.lastTranscript = nil
         self.lastTranscriptAt = nil
         self.preDetectTask?.cancel()
@@ -628,6 +645,30 @@ actor VoiceWakeRuntime {
             await MainActor.run { VoiceSessionCoordinator.shared.updateLevel(token: token, 0) }
         }
 
+        // Voice conversation mode: launch multi-turn TTS conversation instead of single-shot forward.
+        let conversationSnapshot = await MainActor.run {
+            (enabled: AppStateStore.shared.voiceConversationEnabled,
+             apiKey: AppStateStore.shared.voiceConversationTTSApiKey,
+             voiceId: AppStateStore.shared.voiceConversationTTSVoiceId)
+        }
+        if conversationSnapshot.enabled, !finalTranscript.isEmpty {
+            let ttsConfig = MiniMaxTTSClient.Config(
+                apiKey: conversationSnapshot.apiKey,
+                voiceId: conversationSnapshot.voiceId)
+            let agentId = resolvedAgentId
+            let existingToken = self.overlayToken
+            await MainActor.run {
+                VoiceConversationRuntime.shared.start(
+                    transcript: finalTranscript,
+                    agentId: agentId,
+                    ttsConfig: ttsConfig,
+                    existingOverlayToken: existingToken)
+            }
+            self.overlayToken = nil
+            // Don't restart recognizer — conversation runtime owns the mic now.
+            return
+        }
+
         let delay: TimeInterval = 0.0
         let sendChime = finalTranscript.isEmpty ? .none : config.sendChime
         if let token = self.overlayToken {
@@ -636,14 +677,18 @@ actor VoiceWakeRuntime {
                     token: token,
                     text: finalTranscript,
                     sendChime: sendChime,
-                    autoSendAfter: delay)
+                    autoSendAfter: delay,
+                    agentId: resolvedAgentId)
             }
         } else if !finalTranscript.isEmpty {
             if sendChime != .none {
                 await MainActor.run { VoiceWakeChimePlayer.play(sendChime, reason: "voicewake.send") }
             }
+            let agentId = resolvedAgentId
             Task.detached {
-                await VoiceWakeForwarder.forward(transcript: finalTranscript)
+                var opts = VoiceWakeForwarder.ForwardOptions()
+                opts.agentId = agentId
+                await VoiceWakeForwarder.forward(transcript: finalTranscript, options: opts)
             }
         }
         self.overlayToken = nil

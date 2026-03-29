@@ -8,7 +8,10 @@ export const voicewakeHandlers: GatewayRequestHandlers = {
   "voicewake.get": async ({ respond }) => {
     try {
       const cfg = await loadVoiceWakeConfig();
-      respond(true, { triggers: cfg.triggers });
+      respond(true, {
+        triggers: cfg.triggers,
+        triggerAgentMap: cfg.triggerAgentMap,
+      });
     } catch (err) {
       respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, formatForLog(err)));
     }
@@ -24,9 +27,16 @@ export const voicewakeHandlers: GatewayRequestHandlers = {
     }
     try {
       const triggers = normalizeVoiceWakeTriggers(params.triggers);
-      const cfg = await setVoiceWakeTriggers(triggers);
-      context.broadcastVoiceWakeChanged(cfg.triggers);
-      respond(true, { triggers: cfg.triggers });
+      const triggerAgentMap =
+        params.triggerAgentMap && typeof params.triggerAgentMap === "object"
+          ? (params.triggerAgentMap as Record<string, string>)
+          : undefined;
+      const cfg = await setVoiceWakeTriggers(triggers, triggerAgentMap);
+      context.broadcastVoiceWakeChanged(cfg.triggers, cfg.triggerAgentMap);
+      respond(true, {
+        triggers: cfg.triggers,
+        triggerAgentMap: cfg.triggerAgentMap,
+      });
     } catch (err) {
       respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, formatForLog(err)));
     }

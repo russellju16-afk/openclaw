@@ -75,6 +75,22 @@ final class AppState {
         }
     }
 
+    /// Maps trigger word (lowercased) → agent ID. Triggers without a mapping use the default agent.
+    var swabbleTriggerAgentMap: [String: String] {
+        didSet {
+            self.ifNotPreview {
+                // Store as JSON data since UserDefaults doesn't natively support [String: String] observation.
+                if let data = try? JSONEncoder().encode(self.swabbleTriggerAgentMap) {
+                    UserDefaults.standard.set(data, forKey: swabbleTriggerAgentMapKey)
+                }
+                if self.swabbleEnabled {
+                    Task { await VoiceWakeRuntime.shared.refresh(state: self) }
+                }
+                self.scheduleVoiceWakeGlobalSyncIfNeeded()
+            }
+        }
+    }
+
     var voiceWakeTriggerChime: VoiceWakeChime {
         didSet { self.ifNotPreview { self.storeChime(self.voiceWakeTriggerChime, key: voiceWakeTriggerChimeKey) } }
     }
@@ -143,6 +159,21 @@ final class AppState {
                 Task { await TalkModeController.shared.setEnabled(self.talkEnabled) }
             }
         }
+    }
+
+    /// When true, voice wake enters multi-turn conversation mode with TTS responses.
+    var voiceConversationEnabled: Bool {
+        didSet { self.ifNotPreview { UserDefaults.standard.set(self.voiceConversationEnabled, forKey: voiceConversationEnabledKey) } }
+    }
+
+    /// MiniMax TTS API key for voice conversation mode.
+    var voiceConversationTTSApiKey: String {
+        didSet { self.ifNotPreview { UserDefaults.standard.set(self.voiceConversationTTSApiKey, forKey: voiceConversationTTSApiKeyKey) } }
+    }
+
+    /// MiniMax TTS voice ID (e.g. "male-qn-qingse").
+    var voiceConversationTTSVoiceId: String {
+        didSet { self.ifNotPreview { UserDefaults.standard.set(self.voiceConversationTTSVoiceId, forKey: voiceConversationTTSVoiceIdKey) } }
     }
 
     /// Gateway-provided UI accent color (hex). Optional; clients provide a default.
@@ -255,6 +286,7 @@ final class AppState {
         self.swabbleEnabled = voiceWakeSupported ? savedVoiceWake : false
         self.swabbleTriggerWords = UserDefaults.standard
             .stringArray(forKey: swabbleTriggersKey) ?? defaultVoiceWakeTriggers
+        self.swabbleTriggerAgentMap = Self.loadTriggerAgentMap()
         self.voiceWakeTriggerChime = Self.loadChime(
             key: voiceWakeTriggerChimeKey,
             fallback: .system(name: "Glass"))
@@ -276,6 +308,9 @@ final class AppState {
         self.voicePushToTalkEnabled = UserDefaults.standard
             .object(forKey: voicePushToTalkEnabledKey) as? Bool ?? false
         self.talkEnabled = UserDefaults.standard.bool(forKey: talkEnabledKey)
+        self.voiceConversationEnabled = UserDefaults.standard.bool(forKey: voiceConversationEnabledKey)
+        self.voiceConversationTTSApiKey = UserDefaults.standard.string(forKey: voiceConversationTTSApiKeyKey) ?? ""
+        self.voiceConversationTTSVoiceId = UserDefaults.standard.string(forKey: voiceConversationTTSVoiceIdKey) ?? "male-qn-qingse"
         self.seamColorHex = nil
         if let storedHeartbeats = UserDefaults.standard.object(forKey: heartbeatsEnabledKey) as? Bool {
             self.heartbeatsEnabled = storedHeartbeats
@@ -706,13 +741,26 @@ final class AppState {
         self.suppressVoiceWakeGlobalSync = false
     }
 
+    func applyGlobalVoiceWakeConfig(triggers: [String], triggerAgentMap: [String: String]) {
+        self.suppressVoiceWakeGlobalSync = true
+        self.swabbleTriggerWords = triggers
+        self.swabbleTriggerAgentMap = triggerAgentMap
+        self.suppressVoiceWakeGlobalSync = false
+    }
+
+    private static func loadTriggerAgentMap() -> [String: String] {
+        guard let data = UserDefaults.standard.data(forKey: swabbleTriggerAgentMapKey) else { return [:] }
+        return (try? JSONDecoder().decode([String: String].self, from: data)) ?? [:]
+    }
+
     private func scheduleVoiceWakeGlobalSyncIfNeeded() {
         guard !self.suppressVoiceWakeGlobalSync else { return }
         let sanitized = sanitizeVoiceWakeTriggers(self.swabbleTriggerWords)
+        let agentMap = self.swabbleTriggerAgentMap
         self.voiceWakeGlobalSyncTask?.cancel()
-        self.voiceWakeGlobalSyncTask = Task { [sanitized] in
+        self.voiceWakeGlobalSyncTask = Task { [sanitized, agentMap] in
             try? await Task.sleep(nanoseconds: 650_000_000)
-            await GatewayConnection.shared.voiceWakeSetTriggers(sanitized)
+            await GatewayConnection.shared.voiceWakeSetTriggers(sanitized, triggerAgentMap: agentMap)
         }
     }
 
@@ -745,6 +793,7 @@ extension AppState {
         state.debugPaneEnabled = true
         state.swabbleEnabled = true
         state.swabbleTriggerWords = ["Claude", "Computer", "Jarvis"]
+        state.swabbleTriggerAgentMap = [:]
         state.voiceWakeTriggerChime = .system(name: "Glass")
         state.voiceWakeSendChime = .system(name: "Ping")
         state.iconAnimationsEnabled = true

@@ -11,7 +11,7 @@ export type NodeEventContext = {
   nodeSendToSession: (sessionKey: string, event: string, payload: unknown) => void;
   nodeSubscribe: (nodeId: string, sessionKey: string) => void;
   nodeUnsubscribe: (nodeId: string, sessionKey: string) => void;
-  broadcastVoiceWakeChanged: (triggers: string[]) => void;
+  broadcastVoiceWakeChanged: (triggers: string[], triggerAgentMap: Record<string, string>) => void;
   addChatRun: (sessionId: string, entry: ChatRunEntry) => void;
   removeChatRun: (
     sessionId: string,

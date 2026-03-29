@@ -24,7 +24,12 @@ enum VoiceWakeTextUtils {
                 .map { self.normalizeToken(String($0)) }
                 .filter { !$0.isEmpty }
             guard !triggerTokens.isEmpty, tokens.count >= triggerTokens.count else { continue }
+            // Exact match (English/spaced languages).
             if zip(triggerTokens, tokens.prefix(triggerTokens.count)).allSatisfy({ $0 == $1 }) {
+                return true
+            }
+            // Prefix match for CJK: "莱财在不在" starts with trigger "莱财".
+            if triggerTokens.count == 1, tokens[0].hasPrefix(triggerTokens[0]) {
                 return true
             }
         }

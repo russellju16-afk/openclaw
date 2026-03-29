@@ -4,6 +4,8 @@ import { createAsyncLock, readJsonFile, writeJsonAtomic } from "./json-files.js"
 
 export type VoiceWakeConfig = {
   triggers: string[];
+  /** Maps a trigger word (lowercased) to an agent ID. Triggers without a mapping use the default agent. */
+  triggerAgentMap: Record<string, string>;
   updatedAtMs: number;
 };
 
@@ -21,6 +23,19 @@ function sanitizeTriggers(triggers: string[] | undefined | null): string[] {
   return cleaned.length > 0 ? cleaned : DEFAULT_TRIGGERS;
 }
 
+function sanitizeTriggerAgentMap(
+  map: Record<string, string> | undefined | null,
+): Record<string, string> {
+  if (!map || typeof map !== "object") return {};
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(map)) {
+    const k = typeof key === "string" ? key.trim().toLowerCase() : "";
+    const v = typeof value === "string" ? value.trim() : "";
+    if (k && v) out[k] = v;
+  }
+  return out;
+}
+
 const withLock = createAsyncLock();
 
 export function defaultVoiceWakeTriggers() {
@@ -31,10 +46,15 @@ export async function loadVoiceWakeConfig(baseDir?: string): Promise<VoiceWakeCo
   const filePath = resolvePath(baseDir);
   const existing = await readJsonFile<VoiceWakeConfig>(filePath);
   if (!existing) {
-    return { triggers: defaultVoiceWakeTriggers(), updatedAtMs: 0 };
+    return {
+      triggers: defaultVoiceWakeTriggers(),
+      triggerAgentMap: {},
+      updatedAtMs: 0,
+    };
   }
   return {
     triggers: sanitizeTriggers(existing.triggers),
+    triggerAgentMap: sanitizeTriggerAgentMap(existing.triggerAgentMap),
     updatedAtMs:
       typeof existing.updatedAtMs === "number" && existing.updatedAtMs > 0
         ? existing.updatedAtMs
@@ -44,13 +64,16 @@ export async function loadVoiceWakeConfig(baseDir?: string): Promise<VoiceWakeCo
 
 export async function setVoiceWakeTriggers(
   triggers: string[],
+  triggerAgentMap?: Record<string, string>,
   baseDir?: string,
 ): Promise<VoiceWakeConfig> {
   const sanitized = sanitizeTriggers(triggers);
+  const sanitizedMap = sanitizeTriggerAgentMap(triggerAgentMap);
   const filePath = resolvePath(baseDir);
   return await withLock(async () => {
     const next: VoiceWakeConfig = {
       triggers: sanitized,
+      triggerAgentMap: sanitizedMap,
       updatedAtMs: Date.now(),
     };
     await writeJsonAtomic(filePath, next);

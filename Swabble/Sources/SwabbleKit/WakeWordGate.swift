@@ -35,11 +35,14 @@ public struct WakeWordGateMatch: Sendable, Equatable {
     public let triggerEndTime: TimeInterval
     public let postGap: TimeInterval
     public let command: String
+    /// The original trigger word (or phrase) that was matched, as provided in the config (lowercased, trimmed).
+    public let trigger: String
 
-    public init(triggerEndTime: TimeInterval, postGap: TimeInterval, command: String) {
+    public init(triggerEndTime: TimeInterval, postGap: TimeInterval, command: String, trigger: String = "") {
         self.triggerEndTime = triggerEndTime
         self.postGap = postGap
         self.command = command
+        self.trigger = trigger
     }
 }
 
@@ -54,12 +57,14 @@ public enum WakeWordGate {
 
     private struct TriggerTokens {
         let tokens: [String]
+        let original: String
     }
 
     private struct MatchCandidate {
         let index: Int
         let triggerEnd: TimeInterval
         let gap: TimeInterval
+        let trigger: String
     }
 
     public static func match(
@@ -79,7 +84,11 @@ public enum WakeWordGate {
             let count = trigger.tokens.count
             guard count > 0, tokens.count > count else { continue }
             for i in 0...(tokens.count - count - 1) {
-                let matched = (0..<count).allSatisfy { tokens[i + $0].normalized == trigger.tokens[$0] }
+                let matched = (0..<count).allSatisfy {
+                    let seg = tokens[i + $0].normalized
+                    let trig = trigger.tokens[$0]
+                    return seg == trig || seg.hasPrefix(trig)
+                }
                 if !matched { continue }
 
                 let triggerEnd = tokens[i + count - 1].end
@@ -89,7 +98,7 @@ public enum WakeWordGate {
 
                 if let best, i <= best.index { continue }
 
-                best = MatchCandidate(index: i, triggerEnd: triggerEnd, gap: gap)
+                best = MatchCandidate(index: i, triggerEnd: triggerEnd, gap: gap, trigger: trigger.original)
             }
         }
 
@@ -97,7 +106,7 @@ public enum WakeWordGate {
         let command = commandText(transcript: transcript, segments: segments, triggerEndTime: best.triggerEnd)
             .trimmingCharacters(in: Self.whitespaceAndPunctuation)
         guard command.count >= config.minCommandLength else { return nil }
-        return WakeWordGateMatch(triggerEndTime: best.triggerEnd, postGap: best.gap, command: command)
+        return WakeWordGateMatch(triggerEndTime: best.triggerEnd, postGap: best.gap, command: command, trigger: best.trigger)
     }
 
     public static func commandText(
@@ -117,14 +126,19 @@ public enum WakeWordGate {
     }
 
     public static func matchesTextOnly(text: String, triggers: [String]) -> Bool {
-        guard !text.isEmpty else { return false }
+        firstMatchingTrigger(text: text, triggers: triggers) != nil
+    }
+
+    /// Returns the first trigger word found in `text`, or nil if none match.
+    public static func firstMatchingTrigger(text: String, triggers: [String]) -> String? {
+        guard !text.isEmpty else { return nil }
         let normalized = text.lowercased()
         for trigger in triggers {
             let token = trigger.trimmingCharacters(in: whitespaceAndPunctuation).lowercased()
             if token.isEmpty { continue }
-            if normalized.contains(token) { return true }
+            if normalized.contains(token) { return token }
         }
-        return false
+        return nil
     }
 
     public static func stripWake(text: String, triggers: [String]) -> String {
@@ -140,12 +154,13 @@ public enum WakeWordGate {
     private static func normalizeTriggers(_ triggers: [String]) -> [TriggerTokens] {
         var output: [TriggerTokens] = []
         for trigger in triggers {
-            let tokens = trigger
+            let trimmed = trigger.trimmingCharacters(in: whitespaceAndPunctuation)
+            let tokens = trimmed
                 .split(whereSeparator: { $0.isWhitespace })
                 .map { normalizeToken(String($0)) }
                 .filter { !$0.isEmpty }
             if tokens.isEmpty { continue }
-            output.append(TriggerTokens(tokens: tokens))
+            output.append(TriggerTokens(tokens: tokens, original: trimmed.lowercased()))
         }
         return output
     }

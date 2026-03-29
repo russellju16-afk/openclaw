@@ -17,6 +17,7 @@ final class VoiceSessionCoordinator {
         var isFinal: Bool
         var sendChime: VoiceWakeChime
         var autoSendDelay: TimeInterval?
+        var agentId: String?
     }
 
     private let logger = Logger(subsystem: "ai.openclaw", category: "voicewake.coordinator")
@@ -63,7 +64,8 @@ final class VoiceSessionCoordinator {
         token: UUID,
         text: String,
         sendChime: VoiceWakeChime,
-        autoSendAfter: TimeInterval?)
+        autoSendAfter: TimeInterval?,
+        agentId: String? = nil)
     {
         guard let session, session.token == token else { return }
         self.logger
@@ -73,6 +75,7 @@ final class VoiceSessionCoordinator {
         self.session?.isFinal = true
         self.session?.sendChime = sendChime
         self.session?.autoSendDelay = autoSendAfter
+        self.session?.agentId = agentId
 
         let attributed = VoiceWakeOverlayController.shared.makeAttributed(from: text)
         VoiceWakeOverlayController.shared.presentFinal(
@@ -93,8 +96,11 @@ final class VoiceSessionCoordinator {
             return
         }
         VoiceWakeOverlayController.shared.beginSendUI(token: token, sendChime: session.sendChime)
+        let agentId = session.agentId
         Task.detached {
-            _ = await VoiceWakeForwarder.forward(transcript: text)
+            var opts = VoiceWakeForwarder.ForwardOptions()
+            opts.agentId = agentId
+            _ = await VoiceWakeForwarder.forward(transcript: text, options: opts)
         }
     }
 
@@ -115,6 +121,14 @@ final class VoiceSessionCoordinator {
 
     func snapshot() -> (token: UUID?, text: String, visible: Bool) {
         (self.session?.token, self.session?.text ?? "", VoiceWakeOverlayController.shared.isVisible)
+    }
+
+    /// Release the coordinator's session without dismissing the overlay.
+    /// Used when conversation mode takes ownership of the overlay token.
+    func releaseSession(token: UUID) {
+        guard let session, session.token == token else { return }
+        self.logger.info("coordinator release session for conversation mode token=\(token.uuidString)")
+        self.session = nil
     }
 
     // MARK: - Private

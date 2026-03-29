@@ -13,6 +13,7 @@ describe("voicewake config", () => {
     await withTempDir("openclaw-voicewake-", async (baseDir) => {
       await expect(loadVoiceWakeConfig(baseDir)).resolves.toEqual({
         triggers: defaultVoiceWakeTriggers(),
+        triggerAgentMap: {},
         updatedAtMs: 0,
       });
     });
@@ -20,12 +21,14 @@ describe("voicewake config", () => {
 
   it("sanitizes and persists triggers", async () => {
     await withTempDir("openclaw-voicewake-", async (baseDir) => {
-      const saved = await setVoiceWakeTriggers(["  hi  ", "", "  there "], baseDir);
+      const saved = await setVoiceWakeTriggers(["  hi  ", "", "  there "], undefined, baseDir);
       expect(saved.triggers).toEqual(["hi", "there"]);
+      expect(saved.triggerAgentMap).toEqual({});
       expect(saved.updatedAtMs).toBeGreaterThan(0);
 
       await expect(loadVoiceWakeConfig(baseDir)).resolves.toEqual({
         triggers: ["hi", "there"],
+        triggerAgentMap: {},
         updatedAtMs: saved.updatedAtMs,
       });
     });
@@ -33,7 +36,7 @@ describe("voicewake config", () => {
 
   it("falls back to defaults for empty or malformed persisted values", async () => {
     await withTempDir("openclaw-voicewake-", async (baseDir) => {
-      const emptySaved = await setVoiceWakeTriggers(["", "   "], baseDir);
+      const emptySaved = await setVoiceWakeTriggers(["", "   "], undefined, baseDir);
       expect(emptySaved.triggers).toEqual(defaultVoiceWakeTriggers());
 
       await fs.mkdir(path.join(baseDir, "settings"), { recursive: true });
@@ -48,6 +51,7 @@ describe("voicewake config", () => {
 
       await expect(loadVoiceWakeConfig(baseDir)).resolves.toEqual({
         triggers: ["wake"],
+        triggerAgentMap: {},
         updatedAtMs: 0,
       });
     });
