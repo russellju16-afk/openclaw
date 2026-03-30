@@ -1,6 +1,10 @@
 import path from "node:path";
 import { resolveStateDir } from "../config/paths.js";
-import { createAsyncLock, readJsonFile, writeJsonAtomic } from "./json-files.js";
+import {
+  createAsyncLock,
+  readJsonFile,
+  writeJsonAtomic,
+} from "./json-files.js";
 
 export type VoiceWakeConfig = {
   triggers: string[];
@@ -42,7 +46,9 @@ export function defaultVoiceWakeTriggers() {
   return [...DEFAULT_TRIGGERS];
 }
 
-export async function loadVoiceWakeConfig(baseDir?: string): Promise<VoiceWakeConfig> {
+export async function loadVoiceWakeConfig(
+  baseDir?: string,
+): Promise<VoiceWakeConfig> {
   const filePath = resolvePath(baseDir);
   const existing = await readJsonFile<VoiceWakeConfig>(filePath);
   if (!existing) {
@@ -68,12 +74,15 @@ export async function setVoiceWakeTriggers(
   baseDir?: string,
 ): Promise<VoiceWakeConfig> {
   const sanitized = sanitizeTriggers(triggers);
-  const sanitizedMap = sanitizeTriggerAgentMap(triggerAgentMap);
   const filePath = resolvePath(baseDir);
   return await withLock(async () => {
+    const resolvedMap =
+      triggerAgentMap !== undefined
+        ? sanitizeTriggerAgentMap(triggerAgentMap)
+        : (await loadVoiceWakeConfig(baseDir)).triggerAgentMap;
     const next: VoiceWakeConfig = {
       triggers: sanitized,
-      triggerAgentMap: sanitizedMap,
+      triggerAgentMap: resolvedMap,
       updatedAtMs: Date.now(),
     };
     await writeJsonAtomic(filePath, next);
