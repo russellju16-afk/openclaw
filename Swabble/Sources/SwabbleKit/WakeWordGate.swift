@@ -79,11 +79,7 @@ public enum WakeWordGate {
             let count = trigger.tokens.count
             guard count > 0, tokens.count > count else { continue }
             for i in 0...(tokens.count - count - 1) {
-                let matched = (0..<count).allSatisfy {
-                    let seg = tokens[i + $0].normalized
-                    let trig = trigger.tokens[$0]
-                    return seg == trig || (Self.containsCJK(trig) && seg.hasPrefix(trig))
-                }
+                let matched = (0..<count).allSatisfy { tokens[i + $0].normalized == trigger.tokens[$0] }
                 if !matched { continue }
 
                 let triggerEnd = tokens[i + count - 1].end
@@ -177,17 +173,6 @@ public enum WakeWordGate {
         token
             .trimmingCharacters(in: whitespaceAndPunctuation)
             .lowercased()
-    }
-
-    /// Whether `s` contains at least one CJK/Hiragana/Katakana/Hangul scalar.
-    private static func containsCJK(_ s: String) -> Bool {
-        s.unicodeScalars.contains { isCJKScalar($0) }
-    }
-
-    private static func isCJKScalar(_ scalar: Unicode.Scalar) -> Bool {
-        (scalar.value >= 0x4E00 && scalar.value <= 0x9FFF)   // CJK Unified
-        || (scalar.value >= 0x3040 && scalar.value <= 0x30FF) // Hiragana/Katakana
-        || (scalar.value >= 0xAC00 && scalar.value <= 0xD7AF) // Hangul
     }
 
     private static let whitespaceAndPunctuation = CharacterSet.whitespacesAndNewlines
