@@ -137,6 +137,26 @@ describe("convertToOllamaMessages", () => {
       { function: { name: "bash", arguments: {} } },
     ]);
   });
+
+  it("falls back to empty object when persisted string arguments parse to an array", () => {
+    const messages = [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "toolCall",
+            id: "call_1",
+            name: "bash",
+            arguments: "[1,2,3]",
+          },
+        ],
+      },
+    ];
+    const result = convertToOllamaMessages(messages);
+    expect(result[0].tool_calls).toEqual([
+      { function: { name: "bash", arguments: {} } },
+    ]);
+  });
 });
 
 describe("buildAssistantMessage", () => {
@@ -254,6 +274,25 @@ describe("buildAssistantMessage", () => {
         role: "assistant" as const,
         content: "",
         tool_calls: [{ function: { name: "bash", arguments: "not-json" } }],
+      },
+      done: true,
+    };
+    const result = buildAssistantMessage(response, modelInfo);
+    const toolCall = result.content[0] as {
+      type: "toolCall";
+      arguments: Record<string, unknown>;
+    };
+    expect(toolCall.arguments).toEqual({});
+  });
+
+  it("falls back to empty object when string tool call arguments parse to an array", () => {
+    const response = {
+      model: "qwen3:32b",
+      created_at: "2026-01-01T00:00:00Z",
+      message: {
+        role: "assistant" as const,
+        content: "",
+        tool_calls: [{ function: { name: "bash", arguments: "[1,2,3]" } }],
       },
       done: true,
     };

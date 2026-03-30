@@ -225,7 +225,7 @@ type InputContentPart =
       type: "toolCall";
       id: string;
       name: string;
-      arguments: Record<string, unknown>;
+      arguments: Record<string, unknown> | string;
     }
   | {
       type: "tool_use";
@@ -276,10 +276,18 @@ function extractToolCalls(content: unknown): OllamaToolCall[] {
           return part.arguments;
         }
         try {
-          return parseJsonPreservingUnsafeIntegers(part.arguments) as Record<
-            string,
-            unknown
-          >;
+          const parsed = parseJsonPreservingUnsafeIntegers(part.arguments);
+          if (
+            typeof parsed === "object" &&
+            parsed !== null &&
+            !Array.isArray(parsed)
+          ) {
+            return parsed as Record<string, unknown>;
+          }
+          log.warn(
+            `Tool call arguments parsed to non-object: ${part.arguments.slice(0, 120)}`,
+          );
+          return {};
         } catch {
           log.warn(
             `Malformed tool call arguments in history: ${part.arguments.slice(0, 120)}`,
@@ -393,9 +401,20 @@ export function buildAssistantMessage(
           return tc.function.arguments;
         }
         try {
-          return parseJsonPreservingUnsafeIntegers(
+          const parsed = parseJsonPreservingUnsafeIntegers(
             tc.function.arguments,
-          ) as Record<string, unknown>;
+          );
+          if (
+            typeof parsed === "object" &&
+            parsed !== null &&
+            !Array.isArray(parsed)
+          ) {
+            return parsed as Record<string, unknown>;
+          }
+          log.warn(
+            `Tool call arguments parsed to non-object: ${tc.function.arguments.slice(0, 120)}`,
+          );
+          return {};
         } catch {
           log.warn(
             `Malformed tool call arguments from Ollama: ${tc.function.arguments.slice(0, 120)}`,
