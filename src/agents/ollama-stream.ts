@@ -9,6 +9,7 @@ import type {
 } from "@mariozechner/pi-ai";
 import { createAssistantMessageEventStream } from "@mariozechner/pi-ai";
 import { createSubsystemLogger } from "../logging/subsystem.js";
+import { safeParseJson } from "../utils.js";
 import { isNonSecretApiKeyMarker } from "./model-auth-markers.js";
 import { OLLAMA_DEFAULT_BASE_URL } from "./ollama-defaults.js";
 import {
@@ -66,7 +67,7 @@ interface OllamaTool {
 interface OllamaToolCall {
   function: {
     name: string;
-    arguments: Record<string, unknown>;
+    arguments: Record<string, unknown> | string;
   };
 }
 
@@ -272,13 +273,11 @@ function extractToolCalls(content: unknown): OllamaToolCall[] {
       // in session history; normalise to an object before replaying.
       const args =
         typeof part.arguments === "string"
-          ? (() => {
-              try {
-                return JSON.parse(part.arguments) as Record<string, unknown>;
-              } catch {
-                return {} as Record<string, unknown>;
-              }
-            })()
+          ? (safeParseJson<Record<string, unknown>>(part.arguments) ??
+            (log.warn(
+              `Malformed tool call arguments in history: ${part.arguments.slice(0, 120)}`,
+            ),
+            {}))
           : part.arguments;
       result.push({ function: { name: part.name, arguments: args } });
     } else if (part.type === "tool_use") {
@@ -382,16 +381,11 @@ export function buildAssistantMessage(
       // object; parse it defensively so history replays don't get rejected.
       const tcArgs =
         typeof tc.function.arguments === "string"
-          ? (() => {
-              try {
-                return JSON.parse(tc.function.arguments) as Record<
-                  string,
-                  unknown
-                >;
-              } catch {
-                return {} as Record<string, unknown>;
-              }
-            })()
+          ? (safeParseJson<Record<string, unknown>>(tc.function.arguments) ??
+            (log.warn(
+              `Malformed tool call arguments from Ollama: ${tc.function.arguments.slice(0, 120)}`,
+            ),
+            {}))
           : tc.function.arguments;
       content.push({
         type: "toolCall",
