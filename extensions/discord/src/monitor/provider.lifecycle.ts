@@ -5,7 +5,10 @@ import { createConnectedChannelStatusPatch } from "openclaw/plugin-sdk/gateway-r
 import { danger } from "openclaw/plugin-sdk/runtime-env";
 import type { RuntimeEnv } from "openclaw/plugin-sdk/runtime-env";
 import { attachDiscordGatewayLogging } from "../gateway-logging.js";
-import { getDiscordGatewayEmitter, waitForDiscordGatewayStop } from "../monitor.gateway.js";
+import {
+  getDiscordGatewayEmitter,
+  waitForDiscordGatewayStop,
+} from "../monitor.gateway.js";
 import type { DiscordVoiceManager } from "../voice/manager.js";
 import { registerGateway, unregisterGateway } from "./gateway-registry.js";
 import type { DiscordMonitorStatusSink } from "./status.js";
@@ -76,6 +79,11 @@ export async function runDiscordGatewayLifecycle(params: {
   let lifecycleStopping = false;
   let forceStopHandler: ((err: unknown) => void) | undefined;
   let queuedForceStopError: unknown;
+  // Persistent no-op error sink registered during teardown to absorb all error
+  // events emitted after disconnect() is called (e.g. pending reconnect timer
+  // + WebSocket close event both emit errors). A one-shot once() only covers
+  // the first emission; subsequent uncaught "error" events crash Node.js.
+  let teardownErrorSink: (() => void) | undefined;
 
   const pushStatus = (patch: Parameters<DiscordMonitorStatusSink>[0]) => {
     params.statusSink?.(patch);
@@ -128,7 +136,17 @@ export async function runDiscordGatewayLifecycle(params: {
     if (!gateway) {
       return;
     }
-    gatewayEmitter?.once("error", () => {});
+    // Register a persistent no-op error handler (not once()) so that all error
+    // events emitted during teardown are silently absorbed. Carbon's GatewayPlugin
+    // can emit multiple errors on a stale-socket reconnect (code 1005): one from
+    // the pending reconnect timer and one from the WebSocket close event. The
+    // second would be an uncaught EventEmitter "error" event and crash Node.js.
+    // This handler is only active while lifecycleStopping=true and is removed in
+    // the finally block, so it never interferes with normal error handling.
+    if (!teardownErrorSink) {
+      teardownErrorSink = () => {};
+      gatewayEmitter?.on("error", teardownErrorSink);
+    }
     gateway.options.reconnect = { maxAttempts: 0 };
     gateway.disconnect();
   };
@@ -243,7 +261,8 @@ export async function runDiscordGatewayLifecycle(params: {
         resetHelloStallCounter();
       } else {
         consecutiveHelloStalls += 1;
-        const forceFreshIdentify = consecutiveHelloStalls >= MAX_CONSECUTIVE_HELLO_STALLS;
+        const forceFreshIdentify =
+          consecutiveHelloStalls >= MAX_CONSECUTIVE_HELLO_STALLS;
         const stalledAt = Date.now();
         reconnectStallWatchdog.arm(stalledAt);
         pushStatus({
@@ -426,6 +445,10 @@ export async function runDiscordGatewayLifecycle(params: {
     reconnectStallWatchdog.stop();
     clearHelloWatch();
     gatewayEmitter?.removeListener("debug", onGatewayDebug);
+    if (teardownErrorSink) {
+      gatewayEmitter?.removeListener("error", teardownErrorSink);
+      teardownErrorSink = undefined;
+    }
     params.abortSignal?.removeEventListener("abort", onAbort);
     if (params.voiceManager) {
       await params.voiceManager.destroy();
