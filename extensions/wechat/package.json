@@ -1,0 +1,26 @@
+{
+  "name": "@openclaw/wechat",
+  "version": "0.0.1",
+  "description": "OpenClaw WeChat personal account channel plugin via macOS notification + AppleScript UI automation",
+  "type": "module",
+  "dependencies": {},
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "channel": {
+      "id": "wechat",
+      "label": "WeChat",
+      "selectionLabel": "WeChat (微信个人号)",
+      "blurb": "微信个人号通道，macOS 通知收消息 + AppleScript 发消息",
+      "aliases": [
+        "weixin"
+      ],
+      "order": 85
+    },
+    "install": {
+      "localPath": "extensions/wechat",
+      "defaultChoice": "local"
+    }
+  }
+}
