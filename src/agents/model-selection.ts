@@ -178,7 +178,7 @@ export function parseModelRef(
   // provider. (#57066)
   const compatAlias = OPENROUTER_COMPAT_ALIASES[trimmed.toLowerCase()];
   if (compatAlias) {
-    return compatAlias;
+    return { ...compatAlias };
   }
   const slash = trimmed.indexOf("/");
   if (slash === -1) {
@@ -332,7 +332,7 @@ export function resolveConfiguredModelRef(params: {
       // any user-defined alias or provider-fallback logic. (#57066)
       const compatAlias = OPENROUTER_COMPAT_ALIASES[trimmed.toLowerCase()];
       if (compatAlias) {
-        return compatAlias;
+        return { ...compatAlias };
       }
 
       const aliasKey = normalizeAliasKey(trimmed);
