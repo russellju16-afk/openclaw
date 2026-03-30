@@ -26,7 +26,9 @@ describe("convertToOllamaMessages", () => {
       },
     ];
     const result = convertToOllamaMessages(messages);
-    expect(result).toEqual([{ role: "user", content: "describe this", images: ["base64data"] }]);
+    expect(result).toEqual([
+      { role: "user", content: "describe this", images: ["base64data"] },
+    ]);
   });
 
   it("prepends system message when provided", () => {
@@ -42,7 +44,12 @@ describe("convertToOllamaMessages", () => {
         role: "assistant",
         content: [
           { type: "text", text: "Let me check." },
-          { type: "toolCall", id: "call_1", name: "bash", arguments: { command: "ls" } },
+          {
+            type: "toolCall",
+            id: "call_1",
+            name: "bash",
+            arguments: { command: "ls" },
+          },
         ],
       },
     ];
@@ -67,9 +74,13 @@ describe("convertToOllamaMessages", () => {
   });
 
   it("includes tool_name from SDK toolResult messages", () => {
-    const messages = [{ role: "toolResult", content: "file contents here", toolName: "read" }];
+    const messages = [
+      { role: "toolResult", content: "file contents here", toolName: "read" },
+    ];
     const result = convertToOllamaMessages(messages);
-    expect(result).toEqual([{ role: "tool", content: "file contents here", tool_name: "read" }]);
+    expect(result).toEqual([
+      { role: "tool", content: "file contents here", tool_name: "read" },
+    ]);
   });
 
   it("omits tool_name when not provided in toolResult", () => {
@@ -82,6 +93,49 @@ describe("convertToOllamaMessages", () => {
   it("handles empty messages array", () => {
     const result = convertToOllamaMessages([]);
     expect(result).toEqual([]);
+  });
+
+  it("parses string toolCall arguments in history into an object for multi-turn replay", () => {
+    // Simulates already-persisted session where arguments were stored as a
+    // JSON string by a prior bug; extractToolCalls must normalise before
+    // sending the history back to Ollama.
+    const messages = [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "toolCall",
+            id: "call_1",
+            name: "read",
+            arguments: '{"path":"/file.txt"}',
+          },
+        ],
+      },
+    ];
+    const result = convertToOllamaMessages(messages);
+    expect(result[0].tool_calls).toEqual([
+      { function: { name: "read", arguments: { path: "/file.txt" } } },
+    ]);
+  });
+
+  it("falls back to empty object when persisted string arguments are malformed JSON", () => {
+    const messages = [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "toolCall",
+            id: "call_1",
+            name: "bash",
+            arguments: "not-valid-json",
+          },
+        ],
+      },
+    ];
+    const result = convertToOllamaMessages(messages);
+    expect(result[0].tool_calls).toEqual([
+      { function: { name: "bash", arguments: {} } },
+    ]);
   });
 });
 
@@ -145,7 +199,9 @@ describe("buildAssistantMessage", () => {
       message: {
         role: "assistant" as const,
         content: "",
-        tool_calls: [{ function: { name: "bash", arguments: { command: "ls -la" } } }],
+        tool_calls: [
+          { function: { name: "bash", arguments: { command: "ls -la" } } },
+        ],
       },
       done: true,
       prompt_eval_count: 20,
@@ -164,6 +220,49 @@ describe("buildAssistantMessage", () => {
     expect(toolCall.name).toBe("bash");
     expect(toolCall.arguments).toEqual({ command: "ls -la" });
     expect(toolCall.id).toMatch(/^ollama_call_[0-9a-f-]{36}$/);
+  });
+
+  it("parses string tool call arguments into an object", () => {
+    const response = {
+      model: "qwen3:32b",
+      created_at: "2026-01-01T00:00:00Z",
+      message: {
+        role: "assistant" as const,
+        content: "",
+        tool_calls: [
+          { function: { name: "bash", arguments: '{"command":"ls -la"}' } },
+        ],
+      },
+      done: true,
+    };
+    const result = buildAssistantMessage(response, modelInfo);
+    expect(result.stopReason).toBe("toolUse");
+    const toolCall = result.content[0] as {
+      type: "toolCall";
+      name: string;
+      arguments: Record<string, unknown>;
+    };
+    expect(toolCall.type).toBe("toolCall");
+    expect(toolCall.arguments).toEqual({ command: "ls -la" });
+  });
+
+  it("falls back to empty object when string tool call arguments are malformed JSON", () => {
+    const response = {
+      model: "qwen3:32b",
+      created_at: "2026-01-01T00:00:00Z",
+      message: {
+        role: "assistant" as const,
+        content: "",
+        tool_calls: [{ function: { name: "bash", arguments: "not-json" } }],
+      },
+      done: true,
+    };
+    const result = buildAssistantMessage(response, modelInfo);
+    const toolCall = result.content[0] as {
+      type: "toolCall";
+      arguments: Record<string, unknown>;
+    };
+    expect(toolCall.arguments).toEqual({});
   });
 
   it("sets all costs to zero for local models", () => {
@@ -185,7 +284,9 @@ describe("buildAssistantMessage", () => {
 });
 
 // Helper: build a ReadableStreamDefaultReader from NDJSON lines
-function mockNdjsonReader(lines: string[]): ReadableStreamDefaultReader<Uint8Array> {
+function mockNdjsonReader(
+  lines: string[],
+): ReadableStreamDefaultReader<Uint8Array> {
   const encoder = new TextEncoder();
   const payload = lines.join("\n") + "\n";
   let consumed = false;
@@ -203,9 +304,14 @@ function mockNdjsonReader(lines: string[]): ReadableStreamDefaultReader<Uint8Arr
   } as unknown as ReadableStreamDefaultReader<Uint8Array>;
 }
 
-async function expectDoneEventContent(lines: string[], expectedContent: unknown) {
+async function expectDoneEventContent(
+  lines: string[],
+  expectedContent: unknown,
+) {
   await withMockNdjsonFetch(lines, async () => {
-    const stream = await createOllamaTestStream({ baseUrl: "http://ollama-host:11434" });
+    const stream = await createOllamaTestStream({
+      baseUrl: "http://ollama-host:11434",
+    });
     const events = await collectStreamEvents(stream);
 
     const doneEvent = events.at(-1);
@@ -383,7 +489,10 @@ describe("createOllamaStreamFn", () => {
         expect(events.at(-1)?.type).toBe("done");
 
         expect(fetchMock).toHaveBeenCalledTimes(1);
-        const [url, requestInit] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+        const [url, requestInit] = fetchMock.mock.calls[0] as unknown as [
+          string,
+          RequestInit,
+        ];
         expect(url).toBe("http://ollama-host:11434/api/chat");
         expect(requestInit.signal).toBe(signal);
         if (typeof requestInit.body !== "string") {
@@ -423,7 +532,10 @@ describe("createOllamaStreamFn", () => {
         const events = await collectStreamEvents(stream);
         expect(events.at(-1)?.type).toBe("done");
 
-        const [, requestInit] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+        const [, requestInit] = fetchMock.mock.calls[0] as unknown as [
+          string,
+          RequestInit,
+        ];
         expect(requestInit.headers).toMatchObject({
           "Content-Type": "application/json",
           "X-OLLAMA-KEY": "provider-secret",
@@ -455,7 +567,10 @@ describe("createOllamaStreamFn", () => {
         });
 
         await collectStreamEvents(stream);
-        const [, requestInit] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+        const [, requestInit] = fetchMock.mock.calls[0] as unknown as [
+          string,
+          RequestInit,
+        ];
         expect(requestInit.headers).toMatchObject({
           Authorization: "Bearer proxy-token",
         });
@@ -491,7 +606,10 @@ describe("createOllamaStreamFn", () => {
         );
 
         await collectStreamEvents(stream);
-        const [, requestInit] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+        const [, requestInit] = fetchMock.mock.calls[0] as unknown as [
+          string,
+          RequestInit,
+        ];
         expect(requestInit.headers).toMatchObject({
           Authorization: "Bearer real-token",
         });
@@ -601,7 +719,10 @@ describe("createConfiguredOllamaStreamFn", () => {
         );
 
         await collectStreamEvents(stream);
-        const [url, requestInit] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+        const [url, requestInit] = fetchMock.mock.calls[0] as unknown as [
+          string,
+          RequestInit,
+        ];
         expect(url).toBe("http://provider-host:11434/api/chat");
         expect(requestInit.headers).toMatchObject({
           Authorization: "Bearer proxy-token",
