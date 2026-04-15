@@ -23,8 +23,6 @@ if (checkOnly && writeMode) {
   process.exit(1);
 }
 
-const shouldWrite = !checkOnly;
-
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const outputPath = path.join(repoRoot, "ARCHITECTURE.md");
 
@@ -193,8 +191,8 @@ async function generateComponentMap(root: string): Promise<string> {
 
   const srcDirs = srcEntries
     .filter((e) => e.isDirectory())
-    .map((e) => e.name)
-    .toSorted();
+    .map((e) => e.name.toString())
+    .toSorted((left, right) => left.localeCompare(right));
 
   // Gather all AGENTS.md files anywhere in the repo (excluding heavy dirs)
   const agentsFiles = await findFiles(root, "AGENTS.md", [
@@ -285,13 +283,11 @@ async function generateDataFlow(root: string): Promise<string> {
     // Keep the "Connection lifecycle" section and the mermaid block within
     const lines = archMd.split("\n");
     let capturing = false;
-    let depth = 0;
     const kept: string[] = [];
     for (const line of lines) {
       // Start capturing at "## Connection lifecycle" or "## Wire protocol"
       if (line.match(/^## .*(connection lifecycle|wire protocol|components|flows)/i)) {
         capturing = true;
-        depth = 0;
       } else if (capturing && line.startsWith("## ")) {
         // Stop at next top-level section
         break;
@@ -580,7 +576,7 @@ async function generateTechStack(root: string): Promise<string> {
 // §8 Build Pipeline
 // ---------------------------------------------------------------------------
 
-async function generateBuildPipeline(root: string): Promise<string> {
+async function generateBuildPipeline(_root: string): Promise<string> {
   const rows: string[][] = [
     ["`pnpm build`", "Full production build (tsdown bundle → DTS → postbuild steps)"],
     ["`pnpm check`", "Conflict markers + Swift policy + tsgo + oxlint + webhook/auth lints"],

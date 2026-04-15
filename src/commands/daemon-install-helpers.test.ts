@@ -187,10 +187,33 @@ describe("buildGatewayInstallPlan", () => {
     // Config env vars should be present
     expect(plan.environment.GOOGLE_API_KEY).toBe("test-key");
     expect(plan.environment.CUSTOM_VAR).toBe("custom-value");
-    expect(plan.environment.OPENCLAW_SERVICE_MANAGED_ENV_KEYS).toBe("CUSTOM_VAR,GOOGLE_API_KEY");
+    expect(plan.environment.OPENCLAW_SERVICE_MANAGED_ENV_KEYS).toBe(
+      "CUSTOM_VAR,GOOGLE_API_KEY,WECOM_API_PROXY",
+    );
     // Service environment vars should take precedence
     expect(plan.environment.OPENCLAW_PORT).toBe("3000");
     expect(plan.environment.HOME).toBe("/Users/me");
+  });
+
+  it("persists WECOM_API_PROXY from the invoking env into the install environment", async () => {
+    mockNodeGatewayPlanFixture({
+      serviceEnvironment: {
+        OPENCLAW_PORT: "3000",
+        HOME: "/Users/me",
+      },
+    });
+
+    const plan = await buildGatewayInstallPlan({
+      env: {
+        HOME: isolatedHome,
+        WECOM_API_PROXY: "http://127.0.0.1:13128",
+      },
+      port: 3000,
+      runtime: "node",
+    });
+
+    expect(plan.environment.WECOM_API_PROXY).toBe("http://127.0.0.1:13128");
+    expect(plan.environment.OPENCLAW_SERVICE_MANAGED_ENV_KEYS).toBe("WECOM_API_PROXY");
   });
 
   it("drops dangerous config env vars before service merge", async () => {

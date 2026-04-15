@@ -27,7 +27,7 @@ describe("resolveFeishuToolAccount", () => {
 
   it("prefers the active contextual account over configured defaultAccount", () => {
     const resolved = resolveFeishuToolAccount({
-      api: { config: cfg },
+      api: { config: cfg, runtime: {} as never },
       defaultAccountId: "work",
     });
 
@@ -36,7 +36,7 @@ describe("resolveFeishuToolAccount", () => {
 
   it("falls back to configured defaultAccount when there is no contextual account", () => {
     const resolved = resolveFeishuToolAccount({
-      api: { config: cfg },
+      api: { config: cfg, runtime: {} as never },
     });
 
     expect(resolved.accountId).toBe("ops");

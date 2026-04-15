@@ -403,9 +403,18 @@ export function createImageTool(options?: {
           throw new Error("image required (empty string in array)");
         }
 
-        const mediaUriMatch = imageRaw.match(/^media:\/\/inbound\/([^\]\s/\\\x00]+)$/i);
-        const resolvedMediaUriPath = mediaUriMatch
-          ? await resolveMediaBufferPath(mediaUriMatch[1], "inbound")
+        const mediaUriPrefix = "media://inbound/";
+        const mediaUriCandidate = imageRaw.startsWith(mediaUriPrefix)
+          ? imageRaw.slice(mediaUriPrefix.length)
+          : undefined;
+        const mediaUriRef =
+          mediaUriCandidate &&
+          !mediaUriCandidate.includes("\0") &&
+          !/[\]\s/\\]/u.test(mediaUriCandidate)
+            ? mediaUriCandidate
+            : undefined;
+        const resolvedMediaUriPath = mediaUriRef
+          ? await resolveMediaBufferPath(mediaUriRef, "inbound")
           : undefined;
 
         // The tool accepts file paths, file/data URLs, or http(s) URLs. In some

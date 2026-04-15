@@ -1159,7 +1159,7 @@ export class CustomerDataService {
           sourceKey: invoice.source_key,
           linkMode: "exact_name_fallback" as const,
         })),
-      ].toSorted((left, right) => String(right.date ?? "").localeCompare(String(left.date ?? ""))),
+      ].toSorted((left, right) => (right.date ?? "").localeCompare(left.date ?? "")),
     );
 
     const explicitDocumentLinks = this.selectArtifactLinksForParties(partyIds, "document");
@@ -1194,7 +1194,7 @@ export class CustomerDataService {
           sourceKey: document.source_key,
           linkMode: "exact_name_fallback" as const,
         })),
-      ].toSorted((left, right) => String(right.date ?? "").localeCompare(String(left.date ?? ""))),
+      ].toSorted((left, right) => (right.date ?? "").localeCompare(left.date ?? "")),
     );
 
     const contacts = this.selectContactsByCustomerIds(customerIds).map((row) => ({

@@ -11,74 +11,20 @@ vi.mock("../infra/system-events.js", () => ({
   enqueueSystemEvent: enqueueSystemEventMock,
 }));
 
-let applyAgentContextEnv: typeof import("./bash-tools.exec-runtime.js").applyAgentContextEnv;
-let buildAgentContextEnvValue: typeof import("./bash-tools.exec-runtime.js").buildAgentContextEnvValue;
 let buildExecExitOutcome: typeof import("./bash-tools.exec-runtime.js").buildExecExitOutcome;
 let detectCursorKeyMode: typeof import("./bash-tools.exec-runtime.js").detectCursorKeyMode;
 let emitExecSystemEvent: typeof import("./bash-tools.exec-runtime.js").emitExecSystemEvent;
 let formatExecFailureReason: typeof import("./bash-tools.exec-runtime.js").formatExecFailureReason;
-let OPENCLAW_AGENT_CONTEXT_ENV: typeof import("./bash-tools.exec-runtime.js").OPENCLAW_AGENT_CONTEXT_ENV;
 let resolveExecTarget: typeof import("./bash-tools.exec-runtime.js").resolveExecTarget;
 
 beforeAll(async () => {
   ({
-    applyAgentContextEnv,
-    buildAgentContextEnvValue,
     buildExecExitOutcome,
     detectCursorKeyMode,
     emitExecSystemEvent,
     formatExecFailureReason,
-    OPENCLAW_AGENT_CONTEXT_ENV,
     resolveExecTarget,
   } = await import("./bash-tools.exec-runtime.js"));
-});
-
-describe("agent context env injection", () => {
-  it("exposes the canonical env var name", () => {
-    expect(OPENCLAW_AGENT_CONTEXT_ENV).toBe("OPENCLAW_AGENT_CONTEXT");
-  });
-
-  it("builds a JSON payload containing the sender id when present", () => {
-    const value = buildAgentContextEnvValue("ou_sender_stable_123");
-    expect(value).not.toBeNull();
-    expect(JSON.parse(value as string)).toEqual({
-      sender_id: "ou_sender_stable_123",
-    });
-  });
-
-  it("trims whitespace-only sender identifiers and returns null", () => {
-    expect(buildAgentContextEnvValue("  ou_sender  ")).toEqual(
-      JSON.stringify({ sender_id: "ou_sender" }),
-    );
-    expect(buildAgentContextEnvValue("   ")).toBeNull();
-    expect(buildAgentContextEnvValue("")).toBeNull();
-    expect(buildAgentContextEnvValue(null)).toBeNull();
-    expect(buildAgentContextEnvValue(undefined)).toBeNull();
-  });
-
-  it("mutates the env map in place when a sender id is provided", () => {
-    const env: Record<string, string> = { PATH: "/usr/bin" };
-    applyAgentContextEnv(env, "u_test_caller");
-    expect(env.OPENCLAW_AGENT_CONTEXT).toBe(JSON.stringify({ sender_id: "u_test_caller" }));
-    expect(env.PATH).toBe("/usr/bin");
-  });
-
-  it("leaves the env map untouched when no sender id is provided", () => {
-    const env: Record<string, string> = { PATH: "/usr/bin" };
-    applyAgentContextEnv(env, null);
-    applyAgentContextEnv(env, undefined);
-    applyAgentContextEnv(env, "");
-    applyAgentContextEnv(env, "   ");
-    expect(env).toEqual({ PATH: "/usr/bin" });
-    expect("OPENCLAW_AGENT_CONTEXT" in env).toBe(false);
-  });
-
-  it("overwrites any existing value on subsequent calls", () => {
-    const env: Record<string, string> = {};
-    applyAgentContextEnv(env, "first");
-    applyAgentContextEnv(env, "second");
-    expect(env.OPENCLAW_AGENT_CONTEXT).toBe(JSON.stringify({ sender_id: "second" }));
-  });
 });
 
 describe("detectCursorKeyMode", () => {

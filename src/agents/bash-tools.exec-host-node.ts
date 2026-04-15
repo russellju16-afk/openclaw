@@ -24,7 +24,6 @@ import {
 import * as execHostShared from "./bash-tools.exec-host-shared.js";
 import {
   DEFAULT_NOTIFY_TAIL_CHARS,
-  OPENCLAW_AGENT_CONTEXT_ENV,
   createApprovalSlug,
   normalizeNotifyOutput,
 } from "./bash-tools.exec-runtime.js";

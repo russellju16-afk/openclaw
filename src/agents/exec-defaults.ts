@@ -77,15 +77,16 @@ export function canExecRequestNode(params: {
   sandboxAvailable?: boolean;
 }): boolean {
   const { cfg, host } = resolveExecConfigState(params);
-  return isRequestedExecTargetAllowed({
+  const request = {
     configuredTarget: host,
-    requestedTarget: "node",
+    requestedTarget: "node" as const,
     sandboxAvailable: resolveExecSandboxAvailability({
       cfg,
       sessionKey: params.sessionKey,
       sandboxAvailable: params.sandboxAvailable,
     }),
-  });
+  };
+  return isRequestedExecTargetAllowed(request);
 }
 
 export function resolveExecDefaults(params: {
@@ -115,6 +116,11 @@ export function resolveExecDefaults(params: {
   });
   const approvalDefaults = loadExecApprovals().defaults;
   const defaultSecurity = resolved.effectiveHost === "sandbox" ? "deny" : "full";
+  const canRequestNodeCheck = {
+    configuredTarget: host,
+    requestedTarget: "node" as const,
+    sandboxAvailable,
+  };
   return {
     host,
     effectiveHost: resolved.effectiveHost,
@@ -131,10 +137,6 @@ export function resolveExecDefaults(params: {
       approvalDefaults?.ask ??
       "off",
     node: params.sessionEntry?.execNode ?? agentExec?.node ?? globalExec?.node,
-    canRequestNode: isRequestedExecTargetAllowed({
-      configuredTarget: host,
-      requestedTarget: "node",
-      sandboxAvailable,
-    }),
+    canRequestNode: isRequestedExecTargetAllowed(canRequestNodeCheck),
   };
 }

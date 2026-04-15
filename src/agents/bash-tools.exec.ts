@@ -505,12 +505,10 @@ function shouldFailClosedInterpreterPreflight(command: string): {
   const rawArgv = splitShellArgs(raw);
   const argv = rawArgv ? stripPreflightEnvPrefix(rawArgv) : null;
   let commandIdx = 0;
-  while (
-    argv &&
-    commandIdx < argv.length &&
-    /^[A-Za-z_][A-Za-z0-9_]*=.*$/u.test(argv[commandIdx])
-  ) {
-    commandIdx += 1;
+  if (argv) {
+    while (commandIdx < argv.length && /^[A-Za-z_][A-Za-z0-9_]*=.*$/u.test(argv[commandIdx])) {
+      commandIdx += 1;
+    }
   }
   const directExecutable = argv?.[commandIdx]?.toLowerCase();
   const args = argv ? argv.slice(commandIdx + 1) : [];

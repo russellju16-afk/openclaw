@@ -283,7 +283,6 @@ export async function runPreparedReply(
   const groupSystemPrompt = normalizeOptionalString(sessionCtx.GroupSystemPrompt) ?? "";
   const inboundMetaPrompt = buildInboundMetaSystemPrompt(
     isNewSession ? sessionCtx : { ...sessionCtx, ThreadStarterBody: undefined },
-    { includeFormattingHints: !useFastReplyRuntime },
   );
   const extraSystemPromptParts = [
     inboundMetaPrompt,

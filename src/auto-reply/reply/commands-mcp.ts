@@ -19,10 +19,6 @@ import {
 import type { CommandHandler } from "./commands-types.js";
 import { parseMcpCommand } from "./mcp-commands.js";
 
-function renderJsonBlock(label: string, value: unknown): string {
-  return `${label}\n\`\`\`json\n${JSON.stringify(value, null, 2)}\n\`\`\``;
-}
-
 function renderDetailBlock(label: string, lines: string[], value: unknown): string {
   const detail = lines
     .map((line) => line.replaceAll("`", "\\`"))

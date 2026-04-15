@@ -69,7 +69,7 @@ export function resolveGatewayScopedTools(params: {
     agentId ?? resolveDefaultAgentId(params.cfg),
   );
 
-  const allTools = createOpenClawTools({
+  const toolOptions = {
     agentSessionKey: params.sessionKey,
     agentChannel: params.messageProvider ?? undefined,
     agentAccountId: params.accountId,
@@ -91,7 +91,10 @@ export function resolveGatewayScopedTools(params: {
       groupPolicy,
       subagentPolicy,
     ]),
-  });
+  };
+  const allTools = createOpenClawTools(
+    toolOptions as unknown as Parameters<typeof createOpenClawTools>[0],
+  );
 
   const policyFiltered = applyToolPolicyPipeline({
     tools: allTools,

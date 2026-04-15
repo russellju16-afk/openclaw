@@ -391,7 +391,7 @@ export async function parseMessageWithAttachments(
       return {
         message: updatedMessage !== message ? updatedMessage.trimEnd() : message,
         images: [],
-        imageOrder: new Array(offloadedRefs.length).fill("offloaded"),
+        imageOrder: Array.from({ length: offloadedRefs.length }, () => "offloaded" as const),
         offloadedRefs,
       };
     } catch (err) {

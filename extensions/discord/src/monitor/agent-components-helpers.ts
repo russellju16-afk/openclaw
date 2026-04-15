@@ -8,7 +8,6 @@ import {
   type StringSelectMenuInteraction,
   type UserSelectMenuInteraction,
 } from "@buape/carbon";
-import type { APIStringSelectComponent } from "discord-api-types/v10";
 import { ChannelType } from "discord-api-types/v10";
 import { createChannelPairingChallengeIssuer } from "openclaw/plugin-sdk/channel-pairing";
 import { resolveCommandAuthorizedFromAuthorizers } from "openclaw/plugin-sdk/command-auth-native";
@@ -243,7 +242,7 @@ export async function resolveComponentInteractionContext(params: {
   const isDirectMessage =
     channelType === ChannelType.DM || (!rawGuildId && !isGroupDm && channelType == null);
   const memberRoleIds = Array.isArray(interaction.rawData.member?.roles)
-    ? interaction.rawData.member.roles.map((roleId: string) => String(roleId))
+    ? interaction.rawData.member.roles.map((roleId: string) => roleId)
     : [];
 
   return {

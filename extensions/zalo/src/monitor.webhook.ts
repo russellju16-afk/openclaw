@@ -2,7 +2,12 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { safeEqualSecret } from "openclaw/plugin-sdk/browser-support";
 import type { ResolvedZaloAccount } from "./accounts.js";
 import type { ZaloFetch, ZaloUpdate } from "./api.js";
-import type { ZaloRuntimeEnv } from "./monitor.js";
+import type { ZaloRuntimeEnv } from "./monitor.types.js";
+import type {
+  OpenClawConfig,
+  RegisterWebhookPluginRouteOptions,
+  RegisterWebhookTargetOptions,
+} from "./runtime-api.js";
 import {
   createDedupeCache,
   createFixedWindowRateLimiter,
@@ -10,15 +15,12 @@ import {
   readJsonWebhookBodyOrReject,
   applyBasicWebhookRequestGuards,
   registerWebhookTargetWithPluginRoute,
-  type RegisterWebhookTargetOptions,
-  type RegisterWebhookPluginRouteOptions,
   registerWebhookTarget,
   resolveWebhookTargetWithAuthOrRejectSync,
   withResolvedWebhookRequestPipeline,
   WEBHOOK_ANOMALY_COUNTER_DEFAULTS,
   WEBHOOK_RATE_LIMIT_DEFAULTS,
   resolveClientIp,
-  type OpenClawConfig,
 } from "./runtime-api.js";
 
 const ZALO_WEBHOOK_REPLAY_WINDOW_MS = 5 * 60_000;

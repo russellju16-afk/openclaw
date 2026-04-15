@@ -10,6 +10,8 @@ import { collectConfigServiceEnvVars } from "./config-env-vars.js";
 import { resolveStateDir } from "./paths.js";
 import type { OpenClawConfig } from "./types.js";
 
+const DURABLE_SERVICE_ENV_PASSTHROUGH_KEYS = ["WECOM_API_PROXY", "wecom_api_proxy"] as const;
+
 function isBlockedServiceEnvVar(key: string): boolean {
   return isDangerousHostEnvVarName(key) || isDangerousHostEnvOverrideVarName(key);
 }
@@ -54,13 +56,31 @@ export function readStateDirDotEnvVars(
   return readStateDirDotEnvVarsFromStateDir(stateDir);
 }
 
+function collectDurableServiceEnvPassthrough(
+  env: Record<string, string | undefined>,
+): Record<string, string> {
+  const entries: Record<string, string> = {};
+  for (const key of DURABLE_SERVICE_ENV_PASSTHROUGH_KEYS) {
+    const value = env[key];
+    if (!value?.trim()) {
+      continue;
+    }
+    if (isBlockedServiceEnvVar(key)) {
+      continue;
+    }
+    entries[key] = value.trim();
+  }
+  return entries;
+}
+
 /**
  * Durable service env sources survive beyond the invoking shell and are safe to
  * persist into gateway install metadata.
  *
  * Precedence:
  * 1. state-dir `.env` file vars
- * 2. config service env vars
+ * 2. explicit durable passthrough env vars
+ * 3. config service env vars
  */
 export function collectDurableServiceEnvVars(params: {
   env: Record<string, string | undefined>;
@@ -68,6 +88,7 @@ export function collectDurableServiceEnvVars(params: {
 }): Record<string, string> {
   return {
     ...readStateDirDotEnvVars(params.env),
+    ...collectDurableServiceEnvPassthrough(params.env),
     ...collectConfigServiceEnvVars(params.config),
   };
 }

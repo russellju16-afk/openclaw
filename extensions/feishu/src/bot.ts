@@ -111,9 +111,13 @@ export type FeishuBotAddedEvent = {
 // Returns null if no broadcast config exists or the peer is not in the broadcast list.
 export function resolveBroadcastAgents(cfg: ClawdbotConfig, peerId: string): string[] | null {
   const broadcast = (cfg as Record<string, unknown>).broadcast;
-  if (!broadcast || typeof broadcast !== "object") {return null;}
+  if (!broadcast || typeof broadcast !== "object") {
+    return null;
+  }
   const agents = (broadcast as Record<string, unknown>)[peerId];
-  if (!Array.isArray(agents) || agents.length === 0) {return null;}
+  if (!Array.isArray(agents) || agents.length === 0) {
+    return null;
+  }
   return agents as string[];
 }
 
@@ -408,7 +412,9 @@ export async function handleFeishuMessage(params: {
       senderId: ctx.senderOpenId,
       log,
     });
-    if (senderResult.name) {ctx = { ...ctx, senderName: senderResult.name };}
+    if (senderResult.name) {
+      ctx = { ...ctx, senderName: senderResult.name };
+    }
 
     // Track permission error to inform agent later (with cooldown to avoid repetition)
     if (senderResult.permissionError) {
@@ -1138,7 +1144,7 @@ export async function handleFeishuMessage(params: {
       const hasKnownAgents = agentIds.length > 0;
 
       log(
-        `feishu[${account.accountId}]: broadcasting to ${broadcastAgents.length} agents (strategy=${strategy}, active=${activeAgentId ?? "none"})`,
+        `feishu[${account.accountId}]: broadcasting to ${broadcastAgents.length} agents (strategy=${JSON.stringify(strategy)}, active=${activeAgentId ?? "none"})`,
       );
 
       const dispatchForAgent = async (agentId: string) => {

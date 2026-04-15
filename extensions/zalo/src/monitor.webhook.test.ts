@@ -20,7 +20,6 @@ import {
   handleZaloWebhookRequest as handleZaloWebhookRequestInternal,
   registerZaloWebhookTarget,
   type ZaloWebhookProcessUpdate,
-  ZaloRetryableWebhookError,
 } from "./monitor.webhook.js";
 import type { ResolvedZaloAccount } from "./types.js";
 const DEFAULT_ACCOUNT: ResolvedZaloAccount = {
@@ -282,7 +281,7 @@ describe("handleZaloWebhookRequest", () => {
     const processUpdate = vi.fn<ZaloWebhookProcessUpdate>(async () => {
       attempts += 1;
       if (attempts === 1) {
-        throw new ZaloRetryableWebhookError("boom");
+        throw new Error("boom");
       }
     });
 

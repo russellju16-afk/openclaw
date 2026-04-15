@@ -51,7 +51,7 @@ const IMAGE_EXTS = new Set([".jpg", ".jpeg", ".png", ".webp"]);
 const SPEC_RE = /(\d+(?:\.\d+)?\s*(?:L|l|KG|kg|Kg|g|G|ML|ml|斤))/;
 
 function compact(value: unknown): string {
-  return String(value ?? "")
+  return (typeof value === "string" ? value : value == null ? "" : JSON.stringify(value))
     .replace(/\s+/g, "")
     .trim();
 }
@@ -205,7 +205,7 @@ function inferClarityLevel(
   return "low";
 }
 
-function loadJson(filePath: string): any {
+function loadJson(filePath: string): unknown {
   return JSON.parse(fs.readFileSync(filePath, "utf8"));
 }
 
@@ -451,7 +451,9 @@ function parseKnownBrandValues(raw: string | null | undefined): string[] {
     .filter(Boolean);
 }
 
-function loadKnownBrands(db: any): string[] {
+function loadKnownBrands(db: {
+  prepare: (sql: string) => { all: () => Array<{ brand?: unknown }> };
+}): string[] {
   const values = new Set<string>();
   const productBrands = db
     .prepare(

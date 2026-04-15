@@ -195,4 +195,17 @@ describe("config env vars", () => {
       ).toBe("from-config");
     });
   });
+
+  it("persists explicit wecom service proxy env vars into durable service env", async () => {
+    await withTempHome(async (_home) => {
+      expect(
+        collectDurableServiceEnvVars({
+          env: {
+            ...process.env,
+            WECOM_API_PROXY: " http://127.0.0.1:13128 ",
+          },
+        }).WECOM_API_PROXY,
+      ).toBe("http://127.0.0.1:13128");
+    });
+  });
 });
