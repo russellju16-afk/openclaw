@@ -292,9 +292,11 @@ async function notifySubscriber(params: {
     return false;
   }
 
+  // Read live config so outbound adapter sees current channel config.
+  const liveConfig = params.api.runtime?.config?.loadConfig?.() ?? params.api.config;
   try {
     await send({
-      cfg: params.api.config,
+      cfg: liveConfig,
       to: params.subscriber.to,
       text: params.text,
       ...(params.subscriber.accountId ? { accountId: params.subscriber.accountId } : {}),
@@ -421,7 +423,9 @@ export async function handleNotifyCommand(params: {
   action: string;
 }): Promise<{ text: string }> {
   if (params.ctx.channel !== "telegram") {
-    return { text: "Pairing notifications are currently supported only on Telegram." };
+    return {
+      text: "Pairing notifications are currently supported only on Telegram.",
+    };
   }
 
   const target = resolveNotifyTarget(params.ctx);
@@ -454,7 +458,9 @@ export async function handleNotifyCommand(params: {
       state.subscribers.splice(currentIndex, 1);
       await writeNotifyState(statePath, state);
     }
-    return { text: "✅ Pair request notifications disabled for this Telegram chat." };
+    return {
+      text: "✅ Pair request notifications disabled for this Telegram chat.",
+    };
   }
 
   if (params.action === "once" || params.action === "arm") {

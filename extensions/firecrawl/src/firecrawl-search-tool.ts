@@ -60,9 +60,11 @@ export function createFirecrawlSearchTool(api: OpenClawPluginApi) {
       const categories = readStringArrayParam(rawParams, "categories");
       const scrapeResults = rawParams.scrapeResults === true;
 
+      // Read live config so writeConfigFile updates take effect without restart.
+      const cfg = api.runtime?.config?.loadConfig?.() ?? api.config;
       return jsonResult(
         await runFirecrawlSearch({
-          cfg: api.config,
+          cfg,
           query,
           count,
           timeoutSeconds,

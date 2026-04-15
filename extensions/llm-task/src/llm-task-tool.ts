@@ -73,10 +73,14 @@ export function createLlmTaskTool(api: OpenClawPluginApi) {
       prompt: Type.String({ description: "Task instruction for the LLM." }),
       input: Type.Optional(Type.Unknown({ description: "Optional input payload for the task." })),
       schema: Type.Optional(
-        Type.Unknown({ description: "Optional JSON Schema to validate the returned JSON." }),
+        Type.Unknown({
+          description: "Optional JSON Schema to validate the returned JSON.",
+        }),
       ),
       provider: Type.Optional(
-        Type.String({ description: "Provider override (e.g. openai-codex, anthropic)." }),
+        Type.String({
+          description: "Provider override (e.g. openai-codex, anthropic).",
+        }),
       ),
       model: Type.Optional(Type.String({ description: "Model id override." })),
       thinking: Type.Optional(Type.String({ description: "Thinking level override." })),
@@ -94,7 +98,10 @@ export function createLlmTaskTool(api: OpenClawPluginApi) {
 
       const pluginCfg = (api.pluginConfig ?? {}) as PluginCfg;
 
-      const defaultsModel = api.config?.agents?.defaults?.model;
+      // Read live config so updates made via writeConfigFile are observed.
+      const liveConfig = api.runtime?.config?.loadConfig?.() ?? api.config;
+
+      const defaultsModel = liveConfig?.agents?.defaults?.model;
       const primary =
         typeof defaultsModel === "string"
           ? normalizeOptionalString(defaultsModel)
@@ -195,8 +202,8 @@ export function createLlmTaskTool(api: OpenClawPluginApi) {
         const result = await api.runtime.agent.runEmbeddedPiAgent({
           sessionId,
           sessionFile,
-          workspaceDir: api.config?.agents?.defaults?.workspace ?? process.cwd(),
-          config: api.config,
+          workspaceDir: liveConfig?.agents?.defaults?.workspace ?? process.cwd(),
+          config: liveConfig,
           prompt: fullPrompt,
           timeoutMs,
           runId: `llm-task-${Date.now()}`,

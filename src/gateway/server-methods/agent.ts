@@ -1,15 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { listAgentIds, resolveAgentWorkspaceDir } from "../../agents/agent-scope.js";
+import { listAgentIds } from "../../agents/agent-scope.js";
 import type { AgentInternalEvent } from "../../agents/internal-events.js";
 import {
   normalizeSpawnedRunMetadata,
   resolveIngressWorkspaceOverrideForSpawnedRun,
 } from "../../agents/spawned-context.js";
 import { buildBareSessionResetPrompt } from "../../auto-reply/reply/session-reset-prompt.js";
-import {
-  buildSessionStartupContextPrelude,
-  shouldApplyStartupContext,
-} from "../../auto-reply/reply/startup-context.js";
 import { agentCommandFromIngress } from "../../commands/agent.js";
 import { loadConfig } from "../../config/config.js";
 import {
@@ -20,7 +16,6 @@ import {
   type SessionEntry,
   updateSessionStore,
 } from "../../config/sessions.js";
-import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { registerAgentRunContext } from "../../infra/agent-events.js";
 import {
   resolveAgentDeliveryPlan,
@@ -33,16 +28,11 @@ import { classifySessionKeyShape, normalizeAgentId } from "../../routing/session
 import { defaultRuntime } from "../../runtime.js";
 import { normalizeInputProvenance, type InputProvenance } from "../../sessions/input-provenance.js";
 import { resolveSendPolicy } from "../../sessions/send-policy.js";
-import {
-  normalizeOptionalLowercaseString,
-  normalizeOptionalString,
-} from "../../shared/string-coerce.js";
 import { createRunningTaskRun } from "../../tasks/task-executor.js";
 import {
-  mergeDeliveryContext,
   normalizeDeliveryContext,
   normalizeSessionDeliveryFields,
-} from "../../utils/delivery-context.shared.js";
+} from "../../utils/delivery-context.js";
 import {
   INTERNAL_MESSAGE_CHANNEL,
   isDeliverableMessageChannel,
@@ -165,7 +155,6 @@ function emitSessionsChanged(
             thinkingLevel: sessionRow.thinkingLevel,
             fastMode: sessionRow.fastMode,
             verboseLevel: sessionRow.verboseLevel,
-            traceLevel: sessionRow.traceLevel,
             reasoningLevel: sessionRow.reasoningLevel,
             elevatedLevel: sessionRow.elevatedLevel,
             sendPolicy: sessionRow.sendPolicy,
@@ -188,8 +177,6 @@ function emitSessionsChanged(
             startedAt: sessionRow.startedAt,
             endedAt: sessionRow.endedAt,
             runtimeMs: sessionRow.runtimeMs,
-            compactionCheckpointCount: sessionRow.compactionCheckpointCount,
-            latestCompactionCheckpoint: sessionRow.latestCompactionCheckpoint,
           }
         : {}),
     },
@@ -205,10 +192,7 @@ function dispatchAgentRunFromGateway(params: {
   respond: GatewayRequestHandlerOptions["respond"];
   context: GatewayRequestHandlerOptions["context"];
 }) {
-  const inputProvenance = normalizeInputProvenance(params.ingressOpts.inputProvenance);
-  const shouldTrackTask =
-    params.ingressOpts.sessionKey?.trim() && inputProvenance?.kind !== "inter_session";
-  if (shouldTrackTask) {
+  if (params.ingressOpts.sessionKey?.trim()) {
     try {
       createRunningTaskRun({
         runtime: "cli",
@@ -317,8 +301,6 @@ export const agentHandlers: GatewayRequestHandlers = {
       groupSpace?: string;
       lane?: string;
       extraSystemPrompt?: string;
-      bootstrapContextMode?: "full" | "lightweight";
-      bootstrapContextRunKind?: "default" | "heartbeat" | "cron";
       internalEvents?: AgentInternalEvent[];
       idempotencyKey: string;
       timeout?: number;
@@ -362,6 +344,10 @@ export const agentHandlers: GatewayRequestHandlers = {
       });
       return;
     }
+    const requestedAgentIdRaw = typeof request.agentId === "string" ? request.agentId.trim() : "";
+    const requestedAgentId = requestedAgentIdRaw
+      ? normalizeAgentId(requestedAgentIdRaw)
+      : undefined;
     const normalizedAttachments = normalizeRpcAttachmentsToChatAttachments(request.attachments);
     const requestedBestEffortDeliver =
       typeof request.bestEffortDeliver === "boolean" ? request.bestEffortDeliver : undefined;
@@ -377,9 +363,11 @@ export const agentHandlers: GatewayRequestHandlers = {
 
       let baseProvider: string | undefined;
       let baseModel: string | undefined;
+      const sessionAgentId =
+        requestedAgentId ?? resolveAgentIdFromSessionKey(requestedSessionKeyRaw);
       if (requestedSessionKeyRaw) {
         const { cfg: sessCfg, entry: sessEntry } = loadSessionEntry(requestedSessionKeyRaw);
-        const modelRef = resolveSessionModelRef(sessCfg, sessEntry, undefined);
+        const modelRef = resolveSessionModelRef(sessCfg, sessEntry, sessionAgentId);
         baseProvider = modelRef.provider;
         baseModel = modelRef.model;
       }
@@ -432,15 +420,15 @@ export const agentHandlers: GatewayRequestHandlers = {
           undefined,
           errorShape(
             ErrorCodes.INVALID_REQUEST,
-            `invalid agent params: unknown channel: ${normalized}`,
+            `invalid agent params: unknown channel: ${String(normalized)}`,
           ),
         );
         return;
       }
     }
 
-    const agentIdRaw = normalizeOptionalString(request.agentId) ?? "";
-    const agentId = agentIdRaw ? normalizeAgentId(agentIdRaw) : undefined;
+    const agentIdRaw = requestedAgentIdRaw;
+    const agentId = requestedAgentId;
     if (agentId) {
       const knownAgents = listAgentIds(cfg);
       if (!knownAgents.includes(agentId)) {
@@ -456,7 +444,10 @@ export const agentHandlers: GatewayRequestHandlers = {
       }
     }
 
-    const requestedSessionKeyRaw = normalizeOptionalString(request.sessionKey);
+    const requestedSessionKeyRaw =
+      typeof request.sessionKey === "string" && request.sessionKey.trim()
+        ? request.sessionKey.trim()
+        : undefined;
     if (
       requestedSessionKeyRaw &&
       classifySessionKeyShape(requestedSessionKeyRaw) === "malformed_agent"
@@ -491,14 +482,13 @@ export const agentHandlers: GatewayRequestHandlers = {
         return;
       }
     }
-    let resolvedSessionId = normalizeOptionalString(request.sessionId);
+    let resolvedSessionId = request.sessionId?.trim() || undefined;
     let sessionEntry: SessionEntry | undefined;
     let bestEffortDeliver = requestedBestEffortDeliver ?? false;
-    let cfgForAgent: OpenClawConfig | undefined;
+    let cfgForAgent: ReturnType<typeof loadConfig> | undefined;
     let resolvedSessionKey = requestedSessionKey;
     let isNewSession = false;
     let skipTimestampInjection = false;
-    let shouldPrependStartupContext = false;
 
     const resetCommandMatch = message.match(RESET_COMMAND_RE);
     if (resetCommandMatch && requestedSessionKey) {
@@ -510,8 +500,7 @@ export const agentHandlers: GatewayRequestHandlers = {
         );
         return;
       }
-      const resetReason =
-        normalizeOptionalLowercaseString(resetCommandMatch[1]) === "new" ? "new" : "reset";
+      const resetReason = resetCommandMatch[1]?.toLowerCase() === "new" ? "new" : "reset";
       const resetResult = await runSessionResetFromAgent({
         key: requestedSessionKey,
         reason: resetReason,
@@ -522,7 +511,7 @@ export const agentHandlers: GatewayRequestHandlers = {
       }
       requestedSessionKey = resetResult.key;
       resolvedSessionId = resetResult.sessionId ?? resolvedSessionId;
-      const postResetMessage = normalizeOptionalString(resetCommandMatch[2]) ?? "";
+      const postResetMessage = resetCommandMatch[2]?.trim() ?? "";
       if (postResetMessage) {
         message = postResetMessage;
       } else {
@@ -532,7 +521,6 @@ export const agentHandlers: GatewayRequestHandlers = {
         // memory files; skip further timestamp injection to avoid duplication.
         message = buildBareSessionResetPrompt(cfg);
         skipTimestampInjection = true;
-        shouldPrependStartupContext = shouldApplyStartupContext({ cfg, action: resetReason });
       }
     }
 
@@ -550,7 +538,7 @@ export const agentHandlers: GatewayRequestHandlers = {
       isNewSession = !entry;
       const now = Date.now();
       const sessionId = entry?.sessionId ?? randomUUID();
-      const labelValue = normalizeOptionalString(request.label) || entry?.label;
+      const labelValue = request.label?.trim() || entry?.label;
       const sessionAgent = resolveAgentIdFromSessionKey(canonicalKey);
       spawnedByValue = canonicalizeSpawnedByForAgent(cfg, sessionAgent, entry?.spawnedBy);
       let inheritedGroup:
@@ -572,42 +560,21 @@ export const agentHandlers: GatewayRequestHandlers = {
       resolvedGroupChannel = resolvedGroupChannel || inheritedGroup?.groupChannel;
       resolvedGroupSpace = resolvedGroupSpace || inheritedGroup?.groupSpace;
       const deliveryFields = normalizeSessionDeliveryFields(entry);
-      // When the session has no delivery context yet (e.g. a freshly-spawned subagent
-      // with deliver: false), seed it from the request's channel/to/threadId params.
-      // Without this, subagent sessions end up with deliveryContext: {channel: "slack"}
-      // and no `to`/`threadId`, which causes announce delivery to either target the
-      // wrong channel (when the parent's lastTo drifts) or fail entirely.
-      const requestDeliveryHint = normalizeDeliveryContext({
-        channel: request.channel?.trim(),
-        to: request.to?.trim(),
-        accountId: request.accountId?.trim(),
-        // Pass threadId directly — normalizeDeliveryContext handles both
-        // string and numeric threadIds (e.g., Matrix uses integers).
-        threadId: request.threadId,
-      });
-      const effectiveDelivery = mergeDeliveryContext(
-        deliveryFields.deliveryContext,
-        requestDeliveryHint,
-      );
-      const effectiveDeliveryFields = normalizeSessionDeliveryFields({
-        deliveryContext: effectiveDelivery,
-      });
       const nextEntryPatch: SessionEntry = {
         sessionId,
         updatedAt: now,
         thinkingLevel: entry?.thinkingLevel,
         fastMode: entry?.fastMode,
         verboseLevel: entry?.verboseLevel,
-        traceLevel: entry?.traceLevel,
         reasoningLevel: entry?.reasoningLevel,
         systemSent: entry?.systemSent,
         sendPolicy: entry?.sendPolicy,
         skillsSnapshot: entry?.skillsSnapshot,
-        deliveryContext: effectiveDeliveryFields.deliveryContext,
-        lastChannel: effectiveDeliveryFields.lastChannel ?? entry?.lastChannel,
-        lastTo: effectiveDeliveryFields.lastTo ?? entry?.lastTo,
-        lastAccountId: effectiveDeliveryFields.lastAccountId ?? entry?.lastAccountId,
-        lastThreadId: effectiveDeliveryFields.lastThreadId ?? entry?.lastThreadId,
+        deliveryContext: deliveryFields.deliveryContext,
+        lastChannel: deliveryFields.lastChannel ?? entry?.lastChannel,
+        lastTo: deliveryFields.lastTo ?? entry?.lastTo,
+        lastAccountId: deliveryFields.lastAccountId ?? entry?.lastAccountId,
+        lastThreadId: deliveryFields.lastThreadId ?? entry?.lastThreadId,
         modelOverride: entry?.modelOverride,
         providerOverride: entry?.providerOverride,
         label: labelValue,
@@ -687,11 +654,25 @@ export const agentHandlers: GatewayRequestHandlers = {
 
     const wantsDelivery = request.deliver === true;
     const explicitTo =
-      normalizeOptionalString(request.replyTo) ?? normalizeOptionalString(request.to);
-    const explicitThreadId = normalizeOptionalString(request.threadId);
-    const turnSourceChannel = normalizeOptionalString(request.channel);
-    const turnSourceTo = normalizeOptionalString(request.to);
-    const turnSourceAccountId = normalizeOptionalString(request.accountId);
+      typeof request.replyTo === "string" && request.replyTo.trim()
+        ? request.replyTo.trim()
+        : typeof request.to === "string" && request.to.trim()
+          ? request.to.trim()
+          : undefined;
+    const explicitThreadId =
+      typeof request.threadId === "string" && request.threadId.trim()
+        ? request.threadId.trim()
+        : undefined;
+    const turnSourceChannel =
+      typeof request.channel === "string" && request.channel.trim()
+        ? request.channel.trim()
+        : undefined;
+    const turnSourceTo =
+      typeof request.to === "string" && request.to.trim() ? request.to.trim() : undefined;
+    const turnSourceAccountId =
+      typeof request.accountId === "string" && request.accountId.trim()
+        ? request.accountId.trim()
+        : undefined;
     const deliveryPlan = resolveAgentDeliveryPlan({
       sessionEntry,
       requestedChannel: request.replyChannel ?? request.channel,
@@ -825,22 +806,6 @@ export const agentHandlers: GatewayRequestHandlers = {
       });
     }
 
-    if (shouldPrependStartupContext && resolvedSessionKey) {
-      const sessionAgentId = resolveAgentIdFromSessionKey(resolvedSessionKey);
-      const runtimeWorkspaceDir =
-        resolveIngressWorkspaceOverrideForSpawnedRun({
-          spawnedBy: spawnedByValue,
-          workspaceDir: sessionEntry?.spawnedWorkspaceDir,
-        }) ?? resolveAgentWorkspaceDir(cfgForAgent ?? cfg, sessionAgentId);
-      const startupContextPrelude = await buildSessionStartupContextPrelude({
-        workspaceDir: runtimeWorkspaceDir,
-        cfg: cfgForAgent ?? cfg,
-      });
-      if (startupContextPrelude) {
-        message = `${startupContextPrelude}\n\n${message}`;
-      }
-    }
-
     const resolvedThreadId = explicitThreadId ?? deliveryPlan.resolvedThreadId;
 
     dispatchAgentRunFromGateway({
@@ -877,8 +842,6 @@ export const agentHandlers: GatewayRequestHandlers = {
         runId,
         lane: request.lane,
         extraSystemPrompt: request.extraSystemPrompt,
-        bootstrapContextMode: request.bootstrapContextMode,
-        bootstrapContextRunKind: request.bootstrapContextRunKind,
         internalEvents: request.internalEvents,
         inputProvenance,
         // Internal-only: allow workspace override for spawned subagent runs.
@@ -910,8 +873,8 @@ export const agentHandlers: GatewayRequestHandlers = {
       return;
     }
     const p = params;
-    const agentIdRaw = normalizeOptionalString(p.agentId) ?? "";
-    const sessionKeyRaw = normalizeOptionalString(p.sessionKey) ?? "";
+    const agentIdRaw = typeof p.agentId === "string" ? p.agentId.trim() : "";
+    const sessionKeyRaw = typeof p.sessionKey === "string" ? p.sessionKey.trim() : "";
     let agentId = agentIdRaw ? normalizeAgentId(agentIdRaw) : undefined;
     if (sessionKeyRaw) {
       if (classifySessionKeyShape(sessionKeyRaw) === "malformed_agent") {

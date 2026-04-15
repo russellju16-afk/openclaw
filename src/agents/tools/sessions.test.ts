@@ -644,6 +644,38 @@ describe("sessions_send gating", () => {
     expect(callGatewayMock.mock.calls[0]?.[0]).toMatchObject({ method: "sessions.resolve" });
   });
 
+  it("routes agentId-only sends to the target main session", async () => {
+    loadConfigMock.mockReturnValue({
+      session: { scope: "per-sender", mainKey: "main" },
+      tools: {
+        agentToAgent: { enabled: true, allow: ["*"] },
+        sessions: { visibility: "all" },
+      },
+    });
+    callGatewayMock.mockResolvedValueOnce({ runId: "run-agent-main" });
+    const tool = createMainSessionsSendTool();
+
+    const result = await tool.execute("call-agent-id-only", {
+      agentId: "fawu",
+      message: "review this contract",
+      timeoutSeconds: 0,
+    });
+
+    expect(result.details).toMatchObject({
+      status: "accepted",
+      runId: "run-agent-main",
+      sessionKey: "agent:fawu:main",
+    });
+    expect(callGatewayMock).toHaveBeenCalledTimes(1);
+    expect(callGatewayMock.mock.calls[0]?.[0]).toMatchObject({
+      method: "agent",
+      params: expect.objectContaining({
+        sessionKey: "agent:fawu:main",
+        message: "review this contract",
+      }),
+    });
+  });
+
   it("blocks cross-agent sends when tools.agentToAgent.enabled is false", async () => {
     const tool = createMainSessionsSendTool();
 

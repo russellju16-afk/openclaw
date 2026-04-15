@@ -7,6 +7,7 @@ import {
 } from "../../media-understanding/defaults.js";
 import { getMediaUnderstandingProvider } from "../../media-understanding/provider-registry.js";
 import { buildProviderRegistry } from "../../media-understanding/runner.js";
+import { resolveMediaBufferPath } from "../../media/store.js";
 import { loadWebMedia } from "../../media/web-media.js";
 import {
   describeImageWithModel,
@@ -402,6 +403,11 @@ export function createImageTool(options?: {
           throw new Error("image required (empty string in array)");
         }
 
+        const mediaUriMatch = imageRaw.match(/^media:\/\/inbound\/([^\]\s/\\\x00]+)$/i);
+        const resolvedMediaUriPath = mediaUriMatch
+          ? await resolveMediaBufferPath(mediaUriMatch[1], "inbound")
+          : undefined;
+
         // The tool accepts file paths, file/data URLs, or http(s) URLs. In some
         // agent/model contexts, images can be referenced as pseudo-URIs like
         // `image:0` (e.g. "first image in the prompt"). We don't have access to a
@@ -412,7 +418,14 @@ export function createImageTool(options?: {
         const isFileUrl = /^file:/i.test(imageRaw);
         const isHttpUrl = /^https?:\/\//i.test(imageRaw);
         const isDataUrl = /^data:/i.test(imageRaw);
-        if (hasScheme && !looksLikeWindowsDrivePath && !isFileUrl && !isHttpUrl && !isDataUrl) {
+        if (
+          hasScheme &&
+          !resolvedMediaUriPath &&
+          !looksLikeWindowsDrivePath &&
+          !isFileUrl &&
+          !isHttpUrl &&
+          !isDataUrl
+        ) {
           return {
             content: [
               {
@@ -432,6 +445,9 @@ export function createImageTool(options?: {
         }
 
         const resolvedImage = (() => {
+          if (resolvedMediaUriPath) {
+            return resolvedMediaUriPath;
+          }
           if (sandboxConfig) {
             return imageRaw;
           }

@@ -45,10 +45,12 @@ type SharedServiceEnvironmentFields = {
 };
 
 const SERVICE_PROXY_ENV_KEYS = [
+  "WECOM_API_PROXY",
   "HTTP_PROXY",
   "HTTPS_PROXY",
   "NO_PROXY",
   "ALL_PROXY",
+  "wecom_api_proxy",
   "http_proxy",
   "https_proxy",
   "no_proxy",

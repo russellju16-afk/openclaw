@@ -8,6 +8,7 @@ import { logDebug, logError } from "../logger.js";
 import { redactToolDetail } from "../logging/redact.js";
 import { isPlainObject } from "../utils.js";
 import { sanitizeForConsole } from "./console-sanitize.js";
+import { applyKingdeeToolResultFilter } from "./kingdee-tool-result-filter.js";
 import type { ClientToolDefinition } from "./pi-embedded-runner/run/params.js";
 import type { HookContext } from "./pi-tools.before-tool-call.js";
 import {
@@ -169,7 +170,11 @@ function splitToolExecuteArgs(args: ToolExecuteArgsAny): {
   };
 }
 
-export function toToolDefinitions(tools: AnyAgentTool[]): ToolDefinition[] {
+export function toToolDefinitions(
+  tools: AnyAgentTool[],
+  opts?: { agentId?: string },
+): ToolDefinition[] {
+  const agentId = opts?.agentId;
   return tools.map((tool) => {
     const name = tool.name || "tool";
     const normalizedName = normalizeToolName(name);
@@ -199,7 +204,7 @@ export function toToolDefinitions(tools: AnyAgentTool[]): ToolDefinition[] {
             toolName: normalizedName,
             result: rawResult,
           });
-          return result;
+          return applyKingdeeToolResultFilter(normalizedName, executeParams, result, agentId);
         } catch (err) {
           if (signal?.aborted) {
             throw err;

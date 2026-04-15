@@ -1,6 +1,4 @@
 import { Type } from "@sinclair/typebox";
-import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
-import { normalizeOptionalString } from "openclaw/plugin-sdk/text-runtime";
 import {
   definePluginEntry,
   type GatewayRequestHandlerOptions,
@@ -9,11 +7,7 @@ import {
 import { createVoiceCallRuntime, type VoiceCallRuntime } from "./runtime-entry.js";
 import { registerVoiceCallCli } from "./src/cli.js";
 import {
-  formatVoiceCallLegacyConfigWarnings,
-  normalizeVoiceCallLegacyConfigInput,
-  parseVoiceCallPluginConfig,
-} from "./src/config-compat.js";
-import {
+  VoiceCallConfigSchema,
   resolveVoiceCallConfig,
   validateProviderConfig,
   type VoiceCallConfig,
@@ -22,12 +16,23 @@ import type { CoreConfig } from "./src/core-bridge.js";
 
 const voiceCallConfigSchema = {
   parse(value: unknown): VoiceCallConfig {
-    const normalized = normalizeVoiceCallLegacyConfigInput(value);
-    const enabled = typeof normalized.enabled === "boolean" ? normalized.enabled : true;
-    return parseVoiceCallPluginConfig({
-      ...normalized,
+    const raw =
+      value && typeof value === "object" && !Array.isArray(value)
+        ? (value as Record<string, unknown>)
+        : {};
+
+    const twilio = raw.twilio as Record<string, unknown> | undefined;
+    const legacyFrom = typeof twilio?.from === "string" ? twilio.from : undefined;
+
+    const enabled = typeof raw.enabled === "boolean" ? raw.enabled : true;
+    const providerRaw = raw.provider === "log" ? "mock" : raw.provider;
+    const provider = providerRaw ?? (enabled ? "mock" : undefined);
+
+    return VoiceCallConfigSchema.parse({
+      ...raw,
       enabled,
-      provider: normalized.provider ?? (enabled ? "mock" : undefined),
+      provider,
+      fromNumber: raw.fromNumber ?? legacyFrom,
     });
   },
   uiHints: {
@@ -67,39 +72,49 @@ const voiceCallConfigSchema = {
       advanced: true,
     },
     "streaming.enabled": { label: "Enable Streaming", advanced: true },
-    "streaming.provider": {
-      label: "Streaming Provider",
-      help: "Uses the first registered realtime transcription provider when unset.",
+    "streaming.openaiApiKey": {
+      label: "OpenAI Realtime API Key",
+      sensitive: true,
       advanced: true,
     },
-    "streaming.providers": { label: "Streaming Provider Config", advanced: true },
+    "streaming.sttModel": { label: "Realtime STT Model", advanced: true },
     "streaming.streamPath": { label: "Media Stream Path", advanced: true },
-    "realtime.enabled": { label: "Enable Realtime Voice", advanced: true },
-    "realtime.provider": {
-      label: "Realtime Voice Provider",
-      help: "Uses the first registered realtime voice provider when unset.",
-      advanced: true,
-    },
-    "realtime.streamPath": { label: "Realtime Stream Path", advanced: true },
-    "realtime.instructions": { label: "Realtime Instructions", advanced: true },
-    "realtime.providers": { label: "Realtime Provider Config", advanced: true },
     "tts.provider": {
       label: "TTS Provider Override",
       help: "Deep-merges with messages.tts (Microsoft is ignored for calls).",
       advanced: true,
     },
-    "tts.providers": { label: "TTS Provider Config", advanced: true },
+    "tts.providers.openai.model": { label: "OpenAI TTS Model", advanced: true },
+    "tts.providers.openai.voice": { label: "OpenAI TTS Voice", advanced: true },
+    "tts.providers.openai.apiKey": {
+      label: "OpenAI API Key",
+      sensitive: true,
+      advanced: true,
+    },
+    "tts.providers.elevenlabs.modelId": {
+      label: "ElevenLabs Model ID",
+      advanced: true,
+    },
+    "tts.providers.elevenlabs.voiceId": {
+      label: "ElevenLabs Voice ID",
+      advanced: true,
+    },
+    "tts.providers.elevenlabs.apiKey": {
+      label: "ElevenLabs API Key",
+      sensitive: true,
+      advanced: true,
+    },
+    "tts.providers.elevenlabs.baseUrl": {
+      label: "ElevenLabs Base URL",
+      advanced: true,
+    },
     publicUrl: { label: "Public Webhook URL", advanced: true },
     skipSignatureVerification: {
       label: "Skip Signature Verification",
       advanced: true,
     },
     store: { label: "Call Log Store Path", advanced: true },
-    responseModel: {
-      label: "Response Model",
-      help: "Optional override. Falls back to the runtime default model when unset.",
-      advanced: true,
-    },
+    responseModel: { label: "Response Model", advanced: true },
     responseSystemPrompt: { label: "Response System Prompt", advanced: true },
     responseTimeoutMs: { label: "Response Timeout (ms)", advanced: true },
   },
@@ -148,12 +163,13 @@ export default definePluginEntry({
     const validation = validateProviderConfig(config);
 
     if (api.pluginConfig && typeof api.pluginConfig === "object") {
-      for (const warning of formatVoiceCallLegacyConfigWarnings({
-        value: api.pluginConfig,
-        configPathPrefix: "plugins.entries.voice-call.config",
-        doctorFixCommand: "openclaw doctor --fix",
-      })) {
-        api.logger.warn(warning);
+      const raw = api.pluginConfig;
+      const twilio = raw.twilio as Record<string, unknown> | undefined;
+      if (raw.provider === "log") {
+        api.logger.warn('[voice-call] provider "log" is deprecated; use "mock" instead');
+      }
+      if (typeof twilio?.from === "string") {
+        api.logger.warn("[voice-call] twilio.from is deprecated; use fromNumber instead");
       }
     }
 
@@ -171,10 +187,12 @@ export default definePluginEntry({
         return runtime;
       }
       if (!runtimePromise) {
+        // Read live config so voice-call runtime sees the current settings
+        // when lazily initialized (register-time snapshot may be stale).
+        const liveConfig = api.runtime?.config?.loadConfig?.() ?? api.config;
         runtimePromise = createVoiceCallRuntime({
           config,
-          coreConfig: api.config as CoreConfig,
-          fullConfig: api.config,
+          coreConfig: liveConfig as CoreConfig,
           agentRuntime: api.runtime.agent,
           ttsRuntime: api.runtime.tts,
           logger: api.logger,
@@ -193,12 +211,14 @@ export default definePluginEntry({
     };
 
     const sendError = (respond: (ok: boolean, payload?: unknown) => void, err: unknown) => {
-      respond(false, { error: formatErrorMessage(err) });
+      respond(false, {
+        error: err instanceof Error ? err.message : String(err),
+      });
     };
 
     const resolveCallMessageRequest = async (params: GatewayRequestHandlerOptions["params"]) => {
-      const callId = normalizeOptionalString(params?.callId) ?? "";
-      const message = normalizeOptionalString(params?.message) ?? "";
+      const callId = typeof params?.callId === "string" ? params.callId.trim() : "";
+      const message = typeof params?.message === "string" ? params.message.trim() : "";
       if (!callId || !message) {
         return { error: "callId and message required" } as const;
       }
@@ -258,13 +278,16 @@ export default definePluginEntry({
       "voicecall.initiate",
       async ({ params, respond }: GatewayRequestHandlerOptions) => {
         try {
-          const message = normalizeOptionalString(params?.message) ?? "";
+          const message = typeof params?.message === "string" ? params.message.trim() : "";
           if (!message) {
             respond(false, { error: "message required" });
             return;
           }
           const rt = await ensureRuntime();
-          const to = normalizeOptionalString(params?.to) ?? rt.config.toNumber;
+          const to =
+            typeof params?.to === "string" && params.to.trim()
+              ? params.to.trim()
+              : rt.config.toNumber;
           if (!to) {
             respond(false, { error: "to required" });
             return;
@@ -321,7 +344,7 @@ export default definePluginEntry({
       "voicecall.end",
       async ({ params, respond }: GatewayRequestHandlerOptions) => {
         try {
-          const callId = normalizeOptionalString(params?.callId) ?? "";
+          const callId = typeof params?.callId === "string" ? params.callId.trim() : "";
           if (!callId) {
             respond(false, { error: "callId required" });
             return;
@@ -344,7 +367,11 @@ export default definePluginEntry({
       async ({ params, respond }: GatewayRequestHandlerOptions) => {
         try {
           const raw =
-            normalizeOptionalString(params?.callId) ?? normalizeOptionalString(params?.sid) ?? "";
+            typeof params?.callId === "string"
+              ? params.callId.trim()
+              : typeof params?.sid === "string"
+                ? params.sid.trim()
+                : "";
           if (!raw) {
             respond(false, { error: "callId required" });
             return;
@@ -366,8 +393,8 @@ export default definePluginEntry({
       "voicecall.start",
       async ({ params, respond }: GatewayRequestHandlerOptions) => {
         try {
-          const to = normalizeOptionalString(params?.to) ?? "";
-          const message = normalizeOptionalString(params?.message) ?? "";
+          const to = typeof params?.to === "string" ? params.to.trim() : "";
+          const message = typeof params?.message === "string" ? params.message.trim() : "";
           if (!to) {
             respond(false, { error: "to required" });
             return;
@@ -402,11 +429,14 @@ export default definePluginEntry({
           if (typeof params?.action === "string") {
             switch (params.action) {
               case "initiate_call": {
-                const message = normalizeOptionalString(params.message) ?? "";
+                const message = String(params.message || "").trim();
                 if (!message) {
                   throw new Error("message required");
                 }
-                const to = normalizeOptionalString(params.to) ?? rt.config.toNumber;
+                const to =
+                  typeof params.to === "string" && params.to.trim()
+                    ? params.to.trim()
+                    : rt.config.toNumber;
                 if (!to) {
                   throw new Error("to required");
                 }
@@ -423,8 +453,8 @@ export default definePluginEntry({
                 return json({ callId: result.callId, initiated: true });
               }
               case "continue_call": {
-                const callId = normalizeOptionalString(params.callId) ?? "";
-                const message = normalizeOptionalString(params.message) ?? "";
+                const callId = String(params.callId || "").trim();
+                const message = String(params.message || "").trim();
                 if (!callId || !message) {
                   throw new Error("callId and message required");
                 }
@@ -435,8 +465,8 @@ export default definePluginEntry({
                 return json({ success: true, transcript: result.transcript });
               }
               case "speak_to_user": {
-                const callId = normalizeOptionalString(params.callId) ?? "";
-                const message = normalizeOptionalString(params.message) ?? "";
+                const callId = String(params.callId || "").trim();
+                const message = String(params.message || "").trim();
                 if (!callId || !message) {
                   throw new Error("callId and message required");
                 }
@@ -447,7 +477,7 @@ export default definePluginEntry({
                 return json({ success: true });
               }
               case "end_call": {
-                const callId = normalizeOptionalString(params.callId) ?? "";
+                const callId = String(params.callId || "").trim();
                 if (!callId) {
                   throw new Error("callId required");
                 }
@@ -458,7 +488,7 @@ export default definePluginEntry({
                 return json({ success: true });
               }
               case "get_status": {
-                const callId = normalizeOptionalString(params.callId) ?? "";
+                const callId = String(params.callId || "").trim();
                 if (!callId) {
                   throw new Error("callId required");
                 }
@@ -471,7 +501,7 @@ export default definePluginEntry({
 
           const mode = params?.mode ?? "call";
           if (mode === "status") {
-            const sid = normalizeOptionalString(params.sid) ?? "";
+            const sid = typeof params.sid === "string" ? params.sid.trim() : "";
             if (!sid) {
               throw new Error("sid required for status");
             }
@@ -479,12 +509,18 @@ export default definePluginEntry({
             return json(call ? { found: true, call } : { found: false });
           }
 
-          const to = normalizeOptionalString(params.to) ?? rt.config.toNumber;
+          const to =
+            typeof params.to === "string" && params.to.trim()
+              ? params.to.trim()
+              : rt.config.toNumber;
           if (!to) {
             throw new Error("to required for call");
           }
           const result = await rt.manager.initiateCall(to, undefined, {
-            message: normalizeOptionalString(params.message),
+            message:
+              typeof params.message === "string" && params.message.trim()
+                ? params.message.trim()
+                : undefined,
           });
           if (!result.success) {
             throw new Error(result.error || "initiate failed");
@@ -492,7 +528,7 @@ export default definePluginEntry({
           return json({ callId: result.callId, initiated: true });
         } catch (err) {
           return json({
-            error: formatErrorMessage(err),
+            error: err instanceof Error ? err.message : String(err),
           });
         }
       },
@@ -518,7 +554,11 @@ export default definePluginEntry({
         try {
           await ensureRuntime();
         } catch (err) {
-          api.logger.error(`[voice-call] Failed to start runtime: ${formatErrorMessage(err)}`);
+          api.logger.error(
+            `[voice-call] Failed to start runtime: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
         }
       },
       stop: async () => {

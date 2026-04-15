@@ -175,6 +175,7 @@ type ResolveApiKeyForProfileParams = {
   store: AuthProfileStore;
   profileId: string;
   agentDir?: string;
+  forceRefresh?: boolean;
 };
 
 type SecretDefaults = NonNullable<OpenClawConfig["secrets"]>["defaults"];
@@ -359,7 +360,7 @@ async function tryResolveOAuthProfile(
     return null;
   }
 
-  if (Date.now() < cred.expires) {
+  if (!params.forceRefresh && Date.now() < cred.expires) {
     return await buildOAuthProfileResult({
       provider: cred.provider,
       credentials: cred,
@@ -510,7 +511,7 @@ export async function resolveApiKeyForProfile(
       cred,
     }) ?? cred;
 
-  if (Date.now() < oauthCred.expires) {
+  if (!params.forceRefresh && Date.now() < oauthCred.expires) {
     return await buildOAuthProfileResult({
       provider: oauthCred.provider,
       credentials: oauthCred,

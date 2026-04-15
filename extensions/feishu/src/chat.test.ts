@@ -71,6 +71,11 @@ describe("registerFeishuChatTools", () => {
     expect(registerTool).toHaveBeenCalledTimes(1);
     const tool = registerTool.mock.calls[0]?.[0];
     expect(tool?.name).toBe("feishu_chat");
+    expect(tool?.displaySummary).toBe(
+      "Resolve Feishu member IDs to human names, or inspect chat and member details.",
+    );
+    expect(tool?.description).toContain("resolve Feishu member IDs");
+    expect(tool?.description).toContain("member_info");
 
     chatGetMock.mockResolvedValueOnce({
       code: 0,
@@ -102,6 +107,8 @@ describe("registerFeishuChatTools", () => {
       data: {
         user: {
           open_id: "ou_1",
+          user_id: "u_1",
+          union_id: "on_1",
           name: "member1",
           email: "member1@example.com",
           department_ids: ["od_1"],
@@ -116,9 +123,13 @@ describe("registerFeishuChatTools", () => {
       expect.objectContaining({
         member_id: "ou_1",
         open_id: "ou_1",
+        user_id: "u_1",
+        union_id: "on_1",
         name: "member1",
         email: "member1@example.com",
         department_ids: ["od_1"],
+        stable_person_key: "on_1",
+        preferred_send_target: "user:u_1",
       }),
     );
   });

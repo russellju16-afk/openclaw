@@ -84,6 +84,36 @@ describe("handleCommands /mcp", () => {
     });
   });
 
+  it("shows an effective summary before the raw JSON block", async () => {
+    await withTempHome("openclaw-command-mcp-home-", async () => {
+      const workspaceDir = await workspaceHarness.createWorkspace();
+      const setParams = buildCommandTestParams(
+        '/mcp set context7={"command":"node","args":["server with spaces.mjs","--flag=two words"],"cwd":"/tmp/work dir","connectionTimeoutMs":1234}',
+        buildCfg(),
+        undefined,
+        { workspaceDir },
+      );
+      setParams.command.senderIsOwner = true;
+
+      const setResult = await handleCommands(setParams);
+      expect(setResult.reply?.text).toContain('MCP server "context7" saved');
+
+      const showParams = buildCommandTestParams("/mcp show context7", buildCfg(), undefined, {
+        workspaceDir,
+      });
+      showParams.command.senderIsOwner = true;
+      const showResult = await handleCommands(showParams);
+
+      expect(showResult.reply?.text).toContain("Effective transport: `stdio`");
+      expect(showResult.reply?.text).toContain(
+        'Launch: `node "server with spaces.mjs" "--flag=two words"`',
+      );
+      expect(showResult.reply?.text).toContain('Working directory: `"/tmp/work dir"`');
+      expect(showResult.reply?.text).toContain("Connection timeout: `1234ms`");
+      expect(showResult.reply?.text).toContain("```json");
+    });
+  });
+
   it("rejects internal writes without operator.admin", async () => {
     await withTempHome("openclaw-command-mcp-home-", async () => {
       const workspaceDir = await workspaceHarness.createWorkspace();

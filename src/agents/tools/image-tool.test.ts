@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/config.js";
 import type { ModelDefinitionConfig } from "../../config/types.models.js";
+import * as mediaStore from "../../media/store.js";
 import type {
   ImageDescriptionRequest,
   ImagesDescriptionRequest,
@@ -1073,6 +1074,26 @@ describe("image tool implicit imageModel config", () => {
       } finally {
         await fs.rm(outsideDir, { recursive: true, force: true });
       }
+    });
+  });
+
+  it("resolves media://inbound refs through the media store", async () => {
+    const fetch = stubMinimaxOkFetch();
+    await withTempWorkspacePng(async ({ imagePath }) => {
+      await withTempAgentDir(async (agentDir) => {
+        const cfg = createMinimaxImageConfig();
+        const resolveSpy = vi
+          .spyOn(mediaStore, "resolveMediaBufferPath")
+          .mockResolvedValue(imagePath);
+        try {
+          const tool = createRequiredImageTool({ config: cfg, agentDir });
+          await expectImageToolExecOk(tool, "media://inbound/fake-image.png");
+          expect(resolveSpy).toHaveBeenCalledWith("fake-image.png", "inbound");
+          expect(fetch).toHaveBeenCalledTimes(1);
+        } finally {
+          resolveSpy.mockRestore();
+        }
+      });
     });
   });
 

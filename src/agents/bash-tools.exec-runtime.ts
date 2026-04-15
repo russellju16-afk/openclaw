@@ -1,5 +1,6 @@
 import path from "node:path";
 import type { AgentToolResult } from "@mariozechner/pi-agent-core";
+import { Type } from "@sinclair/typebox";
 import {
   DEFAULT_EXEC_APPROVAL_TIMEOUT_MS,
   resolveExecApprovalAllowedDecisions,
@@ -8,7 +9,7 @@ import {
   type ExecTarget,
 } from "../infra/exec-approvals.js";
 import { requestHeartbeatNow } from "../infra/heartbeat-wake.js";
-import { isDangerousHostInheritedEnvVarName } from "../infra/host-env-security.js";
+import { isDangerousHostEnvVarName } from "../infra/host-env-security.js";
 import { findPathKey, mergePathPrepend } from "../infra/path-prepend.js";
 import { enqueueSystemEvent } from "../infra/system-events.js";
 import { scopedHeartbeatWakeOptions } from "../routing/session-key.js";
@@ -26,7 +27,6 @@ import { logWarn } from "../logger.js";
 import type { ManagedRun } from "../process/supervisor/index.js";
 import { getProcessSupervisor } from "../process/supervisor/index.js";
 import type { RunExit, TerminationReason } from "../process/supervisor/types.js";
-import { normalizeDeliveryContext, type DeliveryContext } from "../utils/delivery-context.js";
 import {
   addSession,
   appendOutput,
@@ -42,8 +42,6 @@ import {
 } from "./bash-tools.shared.js";
 import { buildCursorPositionResponse, stripDsrRequests } from "./pty-dsr.js";
 import { getShellConfig, sanitizeBinaryOutput } from "./shell-utils.js";
-
-export { execSchema } from "./bash-tools.schemas.js";
 
 const SMKX = "\x1b[?1h";
 const RMKX = "\x1b[?1l";
@@ -74,7 +72,7 @@ export function sanitizeHostBaseEnv(env: Record<string, string>): Record<string,
       sanitized[key] = value;
       continue;
     }
-    if (isDangerousHostInheritedEnvVarName(upperKey)) {
+    if (isDangerousHostEnvVarName(upperKey)) {
       continue;
     }
     sanitized[key] = value;
@@ -88,7 +86,7 @@ export function validateHostEnv(env: Record<string, string>): void {
     const upperKey = key.toUpperCase();
 
     // 1. Block known dangerous variables (Fail Closed)
-    if (isDangerousHostInheritedEnvVarName(upperKey)) {
+    if (isDangerousHostEnvVarName(upperKey)) {
       throw new Error(
         `Security Violation: Environment variable '${key}' is forbidden during host execution.`,
       );
@@ -123,6 +121,54 @@ export const DEFAULT_APPROVAL_TIMEOUT_MS = DEFAULT_EXEC_APPROVAL_TIMEOUT_MS;
 export const DEFAULT_APPROVAL_REQUEST_TIMEOUT_MS = DEFAULT_APPROVAL_TIMEOUT_MS + 10_000;
 const DEFAULT_APPROVAL_RUNNING_NOTICE_MS = 10_000;
 const APPROVAL_SLUG_LENGTH = 8;
+
+export const execSchema = Type.Object({
+  command: Type.String({ description: "Shell command to execute" }),
+  workdir: Type.Optional(Type.String({ description: "Working directory (defaults to cwd)" })),
+  env: Type.Optional(Type.Record(Type.String(), Type.String())),
+  yieldMs: Type.Optional(
+    Type.Number({
+      description: "Milliseconds to wait before backgrounding (default 10000)",
+    }),
+  ),
+  background: Type.Optional(Type.Boolean({ description: "Run in background immediately" })),
+  timeout: Type.Optional(
+    Type.Number({
+      description: "Timeout in seconds (optional, kills process on expiry)",
+    }),
+  ),
+  pty: Type.Optional(
+    Type.Boolean({
+      description:
+        "Run in a pseudo-terminal (PTY) when available (TTY-required CLIs, coding agents)",
+    }),
+  ),
+  elevated: Type.Optional(
+    Type.Boolean({
+      description: "Run on the host with elevated permissions (if allowed)",
+    }),
+  ),
+  host: Type.Optional(
+    Type.String({
+      description: "Exec host/target (auto|sandbox|gateway|node).",
+    }),
+  ),
+  security: Type.Optional(
+    Type.String({
+      description: "Exec security mode (deny|allowlist|full).",
+    }),
+  ),
+  ask: Type.Optional(
+    Type.String({
+      description: "Exec ask mode (off|on-miss|always).",
+    }),
+  ),
+  node: Type.Optional(
+    Type.String({
+      description: "Node id/name for host=node.",
+    }),
+  ),
+});
 
 export type ExecProcessFailureKind =
   | "shell-command-not-found"
@@ -161,8 +207,6 @@ export type ExecProcessHandle = {
   pid?: number;
   promise: Promise<ExecProcessOutcome>;
   kill: () => void;
-  /** Immediately suppress all future `onUpdate` calls for this handle. */
-  disableUpdates: () => void;
 };
 
 export function renderExecHostLabel(host: ExecHost) {
@@ -176,21 +220,11 @@ export function renderExecTargetLabel(target: ExecTarget) {
 export function isRequestedExecTargetAllowed(params: {
   configuredTarget: ExecTarget;
   requestedTarget: ExecTarget;
-  sandboxAvailable?: boolean;
 }) {
-  if (params.requestedTarget === params.configuredTarget) {
-    return true;
-  }
-  if (params.configuredTarget === "auto") {
-    if (
-      params.sandboxAvailable &&
-      (params.requestedTarget === "gateway" || params.requestedTarget === "node")
-    ) {
-      return false;
-    }
-    return true;
-  }
-  return false;
+  // `auto` is a routing strategy, not a wildcard allowlist. Keep per-call host
+  // selection pinned to the configured/session-selected target so a sandboxed
+  // session cannot silently hop to gateway or node.
+  return params.requestedTarget === params.configuredTarget;
 }
 
 export function resolveExecTarget(params: {
@@ -201,43 +235,36 @@ export function resolveExecTarget(params: {
 }) {
   const configuredTarget = params.configuredTarget ?? "auto";
   const requestedTarget = params.requestedTarget ?? null;
+  if (params.elevatedRequested) {
+    return {
+      configuredTarget,
+      requestedTarget,
+      selectedTarget: "gateway" as const,
+      effectiveHost: "gateway" as const,
+    };
+  }
   if (
     requestedTarget &&
     !isRequestedExecTargetAllowed({
       configuredTarget,
       requestedTarget,
-      sandboxAvailable: params.sandboxAvailable,
     })
   ) {
-    const allowedConfig = Array.from(
-      new Set(
-        configuredTarget === "auto" &&
-          params.sandboxAvailable &&
-          (requestedTarget === "gateway" || requestedTarget === "node")
-          ? [renderExecTargetLabel(requestedTarget)]
-          : requestedTarget === "gateway" && !params.sandboxAvailable
-            ? ["gateway", "auto"]
-            : [renderExecTargetLabel(requestedTarget), "auto"],
-      ),
-    ).join(" or ");
     throw new Error(
       `exec host not allowed (requested ${renderExecTargetLabel(requestedTarget)}; ` +
-        `configured host is ${renderExecTargetLabel(configuredTarget)}; ` +
-        `set tools.exec.host=${allowedConfig} to allow this override).`,
+        `configure tools.exec.host=${renderExecTargetLabel(requestedTarget)} to allow).`,
     );
   }
   const selectedTarget = requestedTarget ?? configuredTarget;
-  const resolvedTarget = params.elevatedRequested
-    ? selectedTarget === "node"
-      ? "node"
-      : "gateway"
-    : selectedTarget;
+  // `auto` preserves the no-config "just work" default: sandbox when available,
+  // otherwise gateway. The YOLO part comes from security/ask defaults, not from
+  // `auto` itself.
   const effectiveHost =
-    resolvedTarget === "auto" ? (params.sandboxAvailable ? "sandbox" : "gateway") : resolvedTarget;
+    selectedTarget === "auto" ? (params.sandboxAvailable ? "sandbox" : "gateway") : selectedTarget;
   return {
     configuredTarget,
     requestedTarget,
-    selectedTarget: resolvedTarget,
+    selectedTarget,
     effectiveHost,
   };
 }
@@ -256,6 +283,46 @@ function compactNotifyOutput(value: string, maxChars = DEFAULT_NOTIFY_SNIPPET_CH
   }
   const safe = Math.max(1, maxChars - 1);
   return `${normalized.slice(0, safe)}…`;
+}
+
+/**
+ * Environment variable name for the caller identity forwarded to child
+ * processes. Downstream tools (e.g. `shared/kingdee_api.py`
+ * `_trusted_sender_from_env`) cross-check it against `--caller` to refuse
+ * spoofed local invocations. See
+ * `~/.openclaw/tech-manuals/laicai/failure-modes.md` FM-020.
+ */
+export const OPENCLAW_AGENT_CONTEXT_ENV = "OPENCLAW_AGENT_CONTEXT";
+
+/**
+ * Build the `OPENCLAW_AGENT_CONTEXT` env value for a given sender identity.
+ * Returns `null` if no sender identity is available (env should not be set).
+ * The payload is a JSON object so downstream readers can evolve the schema
+ * without introducing a second variable.
+ */
+export function buildAgentContextEnvValue(senderId: string | null | undefined): string | null {
+  if (typeof senderId !== "string") {
+    return null;
+  }
+  const trimmed = senderId.trim();
+  if (!trimmed) {
+    return null;
+  }
+  return JSON.stringify({ sender_id: trimmed });
+}
+
+/**
+ * Inject the agent context env var into an in-place env map when a sender
+ * identity is available. No-op otherwise.
+ */
+export function applyAgentContextEnv(
+  env: Record<string, string>,
+  senderId: string | null | undefined,
+): void {
+  const value = buildAgentContextEnvValue(senderId);
+  if (value !== null) {
+    env[OPENCLAW_AGENT_CONTEXT_ENV] = value;
+  }
 }
 
 export function applyShellPath(env: Record<string, string>, shellPath?: string | null) {
@@ -297,12 +364,12 @@ function maybeNotifyOnExit(session: ProcessSession, status: "completed" | "faile
   const summary = output
     ? `Exec ${status} (${session.id.slice(0, 8)}, ${exitLabel}) :: ${output}`
     : `Exec ${status} (${session.id.slice(0, 8)}, ${exitLabel})`;
-  enqueueSystemEvent(summary, {
-    sessionKey,
-    deliveryContext: session.notifyDeliveryContext,
-    trusted: false,
-  });
-  requestHeartbeatNow(scopedHeartbeatWakeOptions(sessionKey, { reason: "exec-event" }));
+  enqueueSystemEvent(summary, { sessionKey });
+  requestHeartbeatNow(
+    scopedHeartbeatWakeOptions(sessionKey, {
+      reason: `exec:${session.id}:exit`,
+    }),
+  );
 }
 
 export function createApprovalSlug(id: string) {
@@ -367,17 +434,13 @@ export function resolveApprovalRunningNoticeMs(value?: number) {
 
 export function emitExecSystemEvent(
   text: string,
-  opts: { sessionKey?: string; contextKey?: string; deliveryContext?: DeliveryContext },
+  opts: { sessionKey?: string; contextKey?: string },
 ) {
   const sessionKey = opts.sessionKey?.trim();
   if (!sessionKey) {
     return;
   }
-  enqueueSystemEvent(text, {
-    sessionKey,
-    contextKey: opts.contextKey,
-    deliveryContext: opts.deliveryContext,
-  });
+  enqueueSystemEvent(text, { sessionKey, contextKey: opts.contextKey });
   requestHeartbeatNow(scopedHeartbeatWakeOptions(sessionKey, { reason: "exec-event" }));
 }
 
@@ -418,8 +481,8 @@ export function formatExecFailureReason(params: {
       return "Command not executable (permission denied)";
     case "overall-timeout":
       return typeof params.timeoutSec === "number" && params.timeoutSec > 0
-        ? `Command timed out after ${params.timeoutSec} seconds. If this command is expected to take longer, re-run with a higher timeout (e.g., exec timeout=300). If it should keep running, start it with exec background=true or yieldMs so OpenClaw can register a pollable process session. Do not rely on shell backgrounding with a trailing &.`
-        : "Command timed out. If this command is expected to take longer, re-run with a higher timeout (e.g., exec timeout=300). If it should keep running, start it with exec background=true or yieldMs so OpenClaw can register a pollable process session. Do not rely on shell backgrounding with a trailing &.";
+        ? `Command timed out after ${params.timeoutSec} seconds. If this command is expected to take longer, re-run with a higher timeout (e.g., exec timeout=300).`
+        : "Command timed out. If this command is expected to take longer, re-run with a higher timeout (e.g., exec timeout=300).";
     case "no-output-timeout":
       return "Command timed out waiting for output";
     case "signal":
@@ -427,7 +490,6 @@ export function formatExecFailureReason(params: {
     case "aborted":
       return "Command aborted before exit code was captured";
   }
-  throw new Error("Unsupported exec failure kind");
 }
 
 export function buildExecExitOutcome(params: {
@@ -509,7 +571,6 @@ export async function runExecProcess(opts: {
   notifyOnExitEmptySuccess?: boolean;
   scopeKey?: string;
   sessionKey?: string;
-  notifyDeliveryContext?: DeliveryContext;
   timeoutSec: number | null;
   onUpdate?: (partialResult: AgentToolResult<ExecToolDetails>) => void;
 }): Promise<ExecProcessHandle> {
@@ -527,7 +588,6 @@ export async function runExecProcess(opts: {
     command: opts.command,
     scopeKey: opts.scopeKey,
     sessionKey: opts.sessionKey,
-    notifyDeliveryContext: normalizeDeliveryContext(opts.notifyDeliveryContext),
     notifyOnExit: opts.notifyOnExit,
     notifyOnExitEmptySuccess: opts.notifyOnExitEmptySuccess === true,
     exitNotified: false,
@@ -554,31 +614,12 @@ export async function runExecProcess(opts: {
   };
   addSession(session);
 
-  // Tracks whether the exec run's promise has settled (process exited or
-  // spawn failed).  Once settled the agent-loop no longer expects
-  // tool_execution_update events, so emitUpdate must become a no-op to
-  // prevent calling into a disposed agent run (the "Agent listener invoked
-  // outside active run" crash — see #62520).
-  let updatesDisabled = false;
-
   const emitUpdate = () => {
     if (!opts.onUpdate) {
       return;
     }
-    if (session.backgrounded || session.exited || updatesDisabled) {
-      return;
-    }
     const tailText = session.tail || session.aggregated;
     const warningText = opts.warnings.length ? `${opts.warnings.join("\n")}\n\n` : "";
-    // Note: opts.onUpdate() is provided by pi-agent-core's agent-loop and
-    // internally pushes Promise.resolve(emit(event)) into an updateEvents
-    // array.  Because emit → processEvents is async, any failure (e.g.
-    // activeRun cleared) produces a *rejected Promise*, not a synchronous
-    // throw — so a try-catch here would be ineffective.  Instead we rely
-    // on the `updatesDisabled` flag being set proactively: by the promise
-    // chain on process exit (Layer 1) and by `disableUpdates()` on abort
-    // signal (Layer 2) — both of which prevent this call from ever being
-    // reached after the agent run has ended.
     opts.onUpdate({
       content: [{ type: "text", text: warningText + (tailText || "") }],
       details: {
@@ -593,7 +634,7 @@ export async function runExecProcess(opts: {
   };
 
   const handleStdout = (data: string) => {
-    const raw = data;
+    const raw = data.toString();
     // Detect smkx/rmkx BEFORE sanitizeBinaryOutput strips ESC sequences.
     // Note: PTY chunking is arbitrary, but smkx/rmkx sequences are typically short (4-5 bytes)
     // and sent atomically by terminals. Split across chunks is rare in practice.
@@ -609,7 +650,7 @@ export async function runExecProcess(opts: {
   };
 
   const handleStderr = (data: string) => {
-    const str = sanitizeBinaryOutput(data);
+    const str = sanitizeBinaryOutput(data.toString());
     for (const chunk of chunkString(str)) {
       appendOutput(session, "stderr", chunk);
       emitUpdate();
@@ -766,11 +807,6 @@ export async function runExecProcess(opts: {
   const promise = managedRun
     .wait()
     .then(async (exit): Promise<ExecProcessOutcome> => {
-      // Disable updates *before* markExited so that any late stdout/stderr
-      // data events queued in the same event-loop tick cannot sneak through
-      // the `session.exited` guard before it flips to true.
-      updatesDisabled = true;
-
       const durationMs = Date.now() - startedAt;
       const outcome = buildExecExitOutcome({
         exit,
@@ -795,7 +831,6 @@ export async function runExecProcess(opts: {
       return outcome;
     })
     .catch((err): ExecProcessOutcome => {
-      updatesDisabled = true;
       markExited(session, null, null, "failed");
       maybeNotifyOnExit(session, "failed");
       return buildExecRuntimeErrorOutcome({
@@ -812,9 +847,6 @@ export async function runExecProcess(opts: {
     promise,
     kill: () => {
       managedRun?.cancel("manual-cancel");
-    },
-    disableUpdates: () => {
-      updatesDisabled = true;
     },
   };
 }

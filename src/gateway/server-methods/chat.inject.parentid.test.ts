@@ -34,4 +34,26 @@ describe("gateway chat.inject transcript writes", () => {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("sanitizes injected assistant text before transcript append", async () => {
+    const { dir, transcriptPath } = createTranscriptFixtureSync({
+      prefix: "openclaw-chat-inject-sanitize-",
+      sessionId: "sess-2",
+    });
+
+    try {
+      const appended = appendInjectedAssistantMessageToTranscript({
+        transcriptPath,
+        message: "[[reply_to_current]] done\n\nNO_REPLY",
+      });
+      expect(appended.ok).toBe(true);
+
+      const lines = fs.readFileSync(transcriptPath, "utf-8").split(/\r?\n/).filter(Boolean);
+      const last = JSON.parse(lines.at(-1) as string) as Record<string, unknown>;
+      const message = last.message as { content: Array<{ text: string }> };
+      expect(message.content[0]?.text).toBe("done");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

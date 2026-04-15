@@ -350,6 +350,7 @@ export async function resolveApiKeyForProvider(params: {
   preferredProfile?: string;
   store?: AuthProfileStore;
   agentDir?: string;
+  forceRefresh?: boolean;
   /** When true, treat profileId as a user-locked selection that must not be
    *  silently overridden by env/config credentials (e.g. ollama-local). */
   lockedProfile?: boolean;
@@ -364,6 +365,7 @@ export async function resolveApiKeyForProvider(params: {
       store,
       profileId,
       agentDir: params.agentDir,
+      forceRefresh: params.forceRefresh,
     });
     if (!resolved) {
       throw new Error(`No credentials found for profile "${profileId}".`);
@@ -443,6 +445,7 @@ export async function resolveApiKeyForProvider(params: {
         store,
         profileId: candidate,
         agentDir: params.agentDir,
+        forceRefresh: params.forceRefresh,
       });
       if (resolved) {
         const mode = store.profiles[candidate]?.type;
@@ -654,6 +657,7 @@ export async function getApiKeyForModel(params: {
   preferredProfile?: string;
   store?: AuthProfileStore;
   agentDir?: string;
+  forceRefresh?: boolean;
   lockedProfile?: boolean;
   credentialPrecedence?: ProviderCredentialPrecedence;
 }): Promise<ResolvedProviderAuth> {
@@ -664,6 +668,7 @@ export async function getApiKeyForModel(params: {
     preferredProfile: params.preferredProfile,
     store: params.store,
     agentDir: params.agentDir,
+    forceRefresh: params.forceRefresh,
     lockedProfile: params.lockedProfile,
     credentialPrecedence: params.credentialPrecedence,
   });

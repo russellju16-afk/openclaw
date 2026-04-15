@@ -1,4 +1,11 @@
 import { Command } from "commander";
+import { readSecretFromFile } from "../acp/secret-file.js";
+import {
+  formatConfiguredMcpServerDetailLines,
+  formatConfiguredMcpServerListLine,
+  inspectConfiguredMcpServer,
+  inspectConfiguredMcpServers,
+} from "../agents/mcp-print.js";
 import { parseConfigValue } from "../auto-reply/reply/config-value.js";
 import {
   listConfiguredMcpServers,
@@ -7,11 +14,6 @@ import {
 } from "../config/mcp-config.js";
 import { serveOpenClawChannelMcp } from "../mcp/channel-server.js";
 import { defaultRuntime } from "../runtime.js";
-import {
-  normalizeLowercaseStringOrEmpty,
-  normalizeStringifiedOptionalString,
-} from "../shared/string-coerce.js";
-import { resolveGatewayAuthOptions } from "./gateway-secret-options.js";
 
 function fail(message: string): never {
   defaultRuntime.error(message);
@@ -21,6 +23,30 @@ function fail(message: string): never {
 
 function printJson(value: unknown): void {
   defaultRuntime.writeJson(value);
+}
+
+function resolveSecretOption(params: {
+  direct?: string;
+  file?: string;
+  directFlag: string;
+  fileFlag: string;
+  label: string;
+}) {
+  const direct = params.direct?.trim();
+  const file = params.file?.trim();
+  if (direct && file) {
+    throw new Error(`Use either ${params.directFlag} or ${params.fileFlag} for ${params.label}.`);
+  }
+  if (file) {
+    return readSecretFromFile(file, params.label);
+  }
+  return direct || undefined;
+}
+
+function warnSecretCliFlag(flag: "--token" | "--password") {
+  defaultRuntime.error(
+    `Warning: ${flag} can be exposed via process listings. Prefer ${flag}-file or environment variables.`,
+  );
 }
 
 export function registerMcpCli(program: Command) {
@@ -42,10 +68,29 @@ export function registerMcpCli(program: Command) {
     .option("-v, --verbose", "Verbose logging to stderr", false)
     .action(async (opts) => {
       try {
-        const { gatewayToken, gatewayPassword } = resolveGatewayAuthOptions(opts);
-        const claudeChannelMode = normalizeLowercaseStringOrEmpty(
-          normalizeStringifiedOptionalString(opts.claudeChannelMode) ?? "auto",
-        );
+        const gatewayToken = resolveSecretOption({
+          direct: opts.token as string | undefined,
+          file: opts.tokenFile as string | undefined,
+          directFlag: "--token",
+          fileFlag: "--token-file",
+          label: "Gateway token",
+        });
+        const gatewayPassword = resolveSecretOption({
+          direct: opts.password as string | undefined,
+          file: opts.passwordFile as string | undefined,
+          directFlag: "--password",
+          fileFlag: "--password-file",
+          label: "Gateway password",
+        });
+        if (opts.token) {
+          warnSecretCliFlag("--token");
+        }
+        if (opts.password) {
+          warnSecretCliFlag("--password");
+        }
+        const claudeChannelMode = String(opts.claudeChannelMode ?? "auto")
+          .trim()
+          .toLowerCase();
         if (
           claudeChannelMode !== "auto" &&
           claudeChannelMode !== "on" &&
@@ -85,8 +130,8 @@ export function registerMcpCli(program: Command) {
         return;
       }
       defaultRuntime.log(`MCP servers (${loaded.path}):`);
-      for (const name of names) {
-        defaultRuntime.log(`- ${name}`);
+      for (const server of inspectConfiguredMcpServers(loaded.mcpServers)) {
+        defaultRuntime.log(formatConfiguredMcpServerListLine(server));
       }
     });
 
@@ -110,8 +155,18 @@ export function registerMcpCli(program: Command) {
       }
       if (name) {
         defaultRuntime.log(`MCP server "${name}" (${loaded.path}):`);
+        for (const line of formatConfiguredMcpServerDetailLines(
+          inspectConfiguredMcpServer(name, value),
+        )) {
+          defaultRuntime.log(line);
+        }
+        defaultRuntime.log("Raw config:");
       } else {
         defaultRuntime.log(`MCP servers (${loaded.path}):`);
+        for (const server of inspectConfiguredMcpServers(loaded.mcpServers)) {
+          defaultRuntime.log(formatConfiguredMcpServerListLine(server));
+        }
+        defaultRuntime.log("Raw config:");
       }
       printJson(value ?? {});
     });

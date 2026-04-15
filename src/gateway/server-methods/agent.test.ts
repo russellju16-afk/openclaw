@@ -12,6 +12,9 @@ const ORIGINAL_STATE_DIR = process.env.OPENCLAW_STATE_DIR;
 const mocks = vi.hoisted(() => ({
   loadSessionEntry: vi.fn(),
   loadGatewaySessionRow: vi.fn(),
+  resolveSessionModelRef: vi.fn(),
+  resolveGatewayModelSupportsImages: vi.fn(),
+  parseMessageWithAttachments: vi.fn(),
   updateSessionStore: vi.fn(),
   agentCommand: vi.fn(),
   registerAgentRunContext: vi.fn(),
@@ -27,6 +30,17 @@ vi.mock("../session-utils.js", async () => {
     ...actual,
     loadSessionEntry: mocks.loadSessionEntry,
     loadGatewaySessionRow: mocks.loadGatewaySessionRow,
+    resolveSessionModelRef: mocks.resolveSessionModelRef,
+    resolveGatewayModelSupportsImages: mocks.resolveGatewayModelSupportsImages,
+  };
+});
+
+vi.mock("../chat-attachments.js", async () => {
+  const actual =
+    await vi.importActual<typeof import("../chat-attachments.js")>("../chat-attachments.js");
+  return {
+    ...actual,
+    parseMessageWithAttachments: mocks.parseMessageWithAttachments,
   };
 });
 
@@ -315,6 +329,9 @@ describe("gateway agent handler", () => {
     } else {
       process.env.OPENCLAW_STATE_DIR = ORIGINAL_STATE_DIR;
     }
+    mocks.resolveSessionModelRef.mockReset();
+    mocks.resolveGatewayModelSupportsImages.mockReset();
+    mocks.parseMessageWithAttachments.mockReset();
     resetTaskRegistryForTests();
   });
 
@@ -664,6 +681,65 @@ describe("gateway agent handler", () => {
     expect(callArgs.message).toBe("[Wed 2026-01-28 20:30 EST] Is it the weekend?");
 
     resetTimeConfig();
+  });
+
+  it("parses direct agent attachments against the target agent model, not the global default", async () => {
+    mocks.loadConfigReturn = {
+      session: { mainKey: "main" },
+      model: { primary: "openai-codex/gpt-5.4" },
+    };
+    primeMainAgentRun({ cfg: mocks.loadConfigReturn });
+    mocks.resolveSessionModelRef.mockImplementation((_cfg, _entry, agentId?: string) =>
+      agentId === "main"
+        ? { provider: "minimax-portal", model: "MiniMax-M2.7" }
+        : { provider: "openai-codex", model: "gpt-5.4" },
+    );
+    mocks.resolveGatewayModelSupportsImages.mockImplementation(
+      async ({ provider, model }: { provider?: string; model?: string }) =>
+        provider === "openai-codex" && model === "gpt-5.4",
+    );
+    mocks.parseMessageWithAttachments.mockResolvedValue({
+      message: "识别图片\n[media attached: media://inbound/test-image.png]",
+      images: [],
+      imageOrder: ["offloaded"],
+      offloadedRefs: [],
+    });
+
+    await invokeAgent(
+      {
+        message: "识别图片",
+        agentId: "main",
+        sessionKey: "agent:main:main",
+        attachments: [
+          {
+            mimeType: "image/png",
+            fileName: "test-image.png",
+            content: "AAAA",
+          },
+        ],
+        idempotencyKey: "test-agent-attachment-model-resolution",
+      },
+      { reqId: "attachment-model-resolution" },
+    );
+
+    await waitForAssertion(() => expect(mocks.agentCommand).toHaveBeenCalled());
+    expect(mocks.resolveSessionModelRef).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      "main",
+    );
+    expect(mocks.parseMessageWithAttachments).toHaveBeenCalledWith(
+      "识别图片",
+      expect.any(Array),
+      expect.objectContaining({ supportsImages: false }),
+    );
+    expect(mocks.agentCommand.mock.calls.at(-1)?.[0]).toEqual(
+      expect.objectContaining({
+        message: expect.stringContaining("[media attached: media://inbound/test-image.png]"),
+        images: [],
+        imageOrder: ["offloaded"],
+      }),
+    );
   });
 
   it.each([

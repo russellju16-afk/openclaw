@@ -123,6 +123,26 @@ describe("buildInboundMetaSystemPrompt", () => {
     expect(payload["flags"]).toBeUndefined();
   });
 
+  it("includes stable sender identity metadata when provided", () => {
+    const prompt = buildInboundMetaSystemPrompt({
+      OriginatingTo: "user:ou_russell_alt",
+      OriginatingChannel: "feishu",
+      Provider: "feishu",
+      Surface: "feishu",
+      ChatType: "direct",
+      SenderStableId: "on_russell",
+      SenderAltIds: ["ou_russell_alt", "u_russell", "on_russell"],
+      SenderPreferredTarget: "user:u_russell",
+    } as TemplateContext);
+
+    const payload = parseInboundMetaPayload(prompt);
+    expect(payload["sender_identity"]).toEqual({
+      stable_id: "on_russell",
+      alt_ids: ["ou_russell_alt", "u_russell", "on_russell"],
+      preferred_target: "user:u_russell",
+    });
+  });
+
   it("omits sender_id when blank", () => {
     const prompt = buildInboundMetaSystemPrompt({
       MessageSid: "458",

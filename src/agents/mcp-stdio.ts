@@ -1,3 +1,4 @@
+import { formatExecCommand } from "../infra/system-run-command.js";
 import { isMcpConfigRecord, toMcpStringArray, toMcpStringRecord } from "./mcp-config-shared.js";
 
 type StdioMcpServerLaunchConfig = {
@@ -42,10 +43,9 @@ export function resolveStdioMcpServerLaunchConfig(raw: unknown): StdioMcpServerL
 }
 
 export function describeStdioMcpServerLaunchConfig(config: StdioMcpServerLaunchConfig): string {
-  const args =
-    Array.isArray(config.args) && config.args.length > 0 ? ` ${config.args.join(" ")}` : "";
-  const cwd = config.cwd ? ` (cwd=${config.cwd})` : "";
-  return `${config.command}${args}${cwd}`;
+  const commandText = formatExecCommand([config.command, ...(config.args ?? [])]);
+  const cwd = config.cwd ? ` (cwd=${formatExecCommand([config.cwd])})` : "";
+  return `${commandText}${cwd}`;
 }
 
 export type { StdioMcpServerLaunchConfig, StdioMcpServerLaunchResult };

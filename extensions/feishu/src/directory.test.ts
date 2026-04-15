@@ -89,6 +89,11 @@ describe("feishu directory (config-backed)", () => {
   it("falls back to static peers on live lookup failure by default", async () => {
     createFeishuClientMock.mockReturnValueOnce({
       contact: {
+        department: {
+          children: vi.fn(async () => {
+            throw new Error("token expired");
+          }),
+        },
         user: {
           list: vi.fn(async () => {
             throw new Error("token expired");
@@ -104,9 +109,105 @@ describe("feishu directory (config-backed)", () => {
     ]);
   });
 
+  it("searches visible department users by name for live peer lookup", async () => {
+    const children = vi.fn(async () => ({
+      code: 0,
+      data: {
+        items: [
+          { open_department_id: "od_sales", name: "销售" },
+          { open_department_id: "od_ops", name: "运营" },
+        ],
+      },
+    }));
+    const findByDepartment = vi.fn(async ({ params }: { params: { department_id: string } }) => {
+      switch (params.department_id) {
+        case "0":
+          return { code: 0, data: { items: [{ open_id: "ou_root", name: "俱敏含" }] } };
+        case "od_sales":
+          return {
+            code: 0,
+            data: {
+              items: [
+                {
+                  open_id: "ou_target",
+                  user_id: "u_target",
+                  union_id: "on_target",
+                  name: "李元甲",
+                },
+              ],
+            },
+          };
+        case "od_ops":
+          return {
+            code: 0,
+            data: {
+              items: [
+                {
+                  open_id: "ou_target",
+                  user_id: "u_target",
+                  union_id: "on_target",
+                  name: "李元甲",
+                },
+              ],
+            },
+          };
+        default:
+          return { code: 0, data: { items: [] } };
+      }
+    });
+
+    createFeishuClientMock.mockReturnValueOnce({
+      contact: {
+        department: { children },
+        user: {
+          findByDepartment,
+        },
+      },
+    });
+
+    const peers = await listFeishuDirectoryPeersLive({
+      cfg: makeConfiguredCfg(),
+      query: "李元甲",
+      fallbackToStatic: false,
+    });
+
+    expect(children).toHaveBeenCalledWith({
+      path: { department_id: "0" },
+      params: {
+        department_id_type: "open_department_id",
+        fetch_child: true,
+        page_size: 50,
+      },
+    });
+    expect(findByDepartment).toHaveBeenCalledWith({
+      params: {
+        department_id: "0",
+        department_id_type: "open_department_id",
+        page_size: 50,
+        user_id_type: "open_id",
+      },
+    });
+    expect(peers).toEqual([
+      {
+        kind: "user",
+        id: "ou_target",
+        name: "李元甲",
+        userId: "u_target",
+        unionId: "on_target",
+        stablePersonKey: "on_target",
+        preferredSendTarget: "user:u_target",
+      },
+    ]);
+  });
+
   it("surfaces live peer lookup failures when fallback is disabled", async () => {
     createFeishuClientMock.mockReturnValueOnce({
       contact: {
+        department: {
+          children: vi.fn(async () => {
+            throw new Error("token expired");
+          }),
+        },
         user: {
           list: vi.fn(async () => {
             throw new Error("token expired");

@@ -105,6 +105,75 @@ describe("resolveMessagingTarget (directory fallback)", () => {
     expect(mocks.listGroupsLive).toHaveBeenCalledTimes(1);
   });
 
+  it("uses directory-provided preferred send targets for user lookups", async () => {
+    const entry: ChannelDirectoryEntry = {
+      kind: "user",
+      id: "user:g49a2fe4",
+      name: "李元甲",
+      raw: {
+        openId: "ou_6cd1c8e08d2da200868f5709061139a1",
+        preferredSendTarget: "user:g49a2fe4",
+      },
+    };
+    mocks.listPeers.mockResolvedValue([]);
+    mocks.listPeersLive.mockResolvedValue([entry]);
+
+    const result = await expectOkResolution({
+      cfg,
+      channel: "feishu",
+      input: "李元甲",
+      preferredKind: "user",
+    });
+
+    expect(result.target).toEqual({
+      to: "user:g49a2fe4",
+      kind: "user",
+      display: "李元甲",
+      source: "directory",
+    });
+  });
+
+  it("includes candidate details in ambiguous user target errors", async () => {
+    mocks.listPeers.mockResolvedValue([
+      {
+        kind: "user",
+        id: "user:g49a2fe4",
+        name: "李元甲",
+        raw: {
+          enterpriseEmail: "liyuanjia@example.com",
+          mobile: "+8618291180131",
+          preferredSendTarget: "user:g49a2fe4",
+        },
+      },
+      {
+        kind: "user",
+        id: "user:other123",
+        name: "李元甲",
+        raw: {
+          mobile: "+8613800002222",
+          preferredSendTarget: "user:other123",
+        },
+      },
+    ]);
+
+    const result = await resolveMessagingTarget({
+      cfg,
+      channel: "feishu",
+      input: "李元甲",
+      preferredKind: "user",
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      throw new Error("expected ambiguous resolution");
+    }
+    expect(result.error.message).toContain('Ambiguous target "李元甲" for feishu');
+    expect(result.error.message).toContain("Candidates:");
+    expect(result.error.message).toContain("liyuanjia@example.com");
+    expect(result.error.message).toContain("user:g49a2fe4");
+    expect(result.error.message).toContain("mobile:+86****0131");
+  });
+
   it("skips directory lookup for direct ids", async () => {
     const result = await expectOkResolution({
       cfg,

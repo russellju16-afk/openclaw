@@ -1,33 +1,29 @@
 import crypto from "node:crypto";
 import { Type } from "@sinclair/typebox";
-import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import type { OpenClawConfig } from "../../config/config.js";
 import { callGateway } from "../../gateway/call.js";
-import { formatErrorMessage } from "../../infra/errors.js";
-import { normalizeAgentId, resolveAgentIdFromSessionKey } from "../../routing/session-key.js";
+import {
+  buildAgentMainSessionKey,
+  normalizeAgentId,
+  resolveAgentIdFromSessionKey,
+} from "../../routing/session-key.js";
 import { SESSION_LABEL_MAX_LENGTH } from "../../sessions/session-label.js";
-import { normalizeOptionalString } from "../../shared/string-coerce.js";
 import {
   type GatewayMessageChannel,
   INTERNAL_MESSAGE_CHANNEL,
 } from "../../utils/message-channel.js";
 import { AGENT_LANE_NESTED } from "../lanes.js";
-import {
-  readLatestAssistantReplySnapshot,
-  waitForAgentRunAndReadUpdatedAssistantReply,
-} from "../run-wait.js";
-import {
-  describeSessionsSendTool,
-  SESSIONS_SEND_TOOL_DISPLAY_SUMMARY,
-} from "../tool-description-presets.js";
 import type { AnyAgentTool } from "./common.js";
 import { jsonResult, readStringParam } from "./common.js";
 import {
   createSessionVisibilityGuard,
   createAgentToAgentPolicy,
+  extractAssistantText,
   resolveEffectiveSessionToolsVisibility,
   resolveSessionReference,
   resolveSessionToolContext,
   resolveVisibleSessionReference,
+  stripToolMessages,
 } from "./sessions-helpers.js";
 import { buildAgentToAgentMessageContext, resolvePingPongTurns } from "./sessions-send-helpers.js";
 import { runSessionsSendA2AFlow } from "./sessions-send-tool.a2a.js";
@@ -42,6 +38,27 @@ const SessionsSendToolSchema = Type.Object({
 
 type GatewayCaller = typeof callGateway;
 const SESSIONS_SEND_REPLY_HISTORY_LIMIT = 50;
+
+function resolveLatestAssistantReplySnapshot(messages: unknown[]): {
+  text?: string;
+  fingerprint?: string;
+} {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    const text = extractAssistantText(message);
+    if (!text) {
+      continue;
+    }
+    let fingerprint: string | undefined;
+    try {
+      fingerprint = JSON.stringify(message);
+    } catch {
+      fingerprint = text;
+    }
+    return { text, fingerprint };
+  }
+  return {};
+}
 
 async function startAgentRun(params: {
   callGateway: GatewayCaller;
@@ -84,8 +101,8 @@ export function createSessionsSendTool(opts?: {
   return {
     label: "Session Send",
     name: "sessions_send",
-    displaySummary: SESSIONS_SEND_TOOL_DISPLAY_SUMMARY,
-    description: describeSessionsSendTool(),
+    description:
+      "Send a message into another session. Use sessionKey or label to identify the target.",
     parameters: SessionsSendToolSchema,
     execute: async (_toolCallId, args) => {
       const params = args as Record<string, unknown>;
@@ -101,8 +118,8 @@ export function createSessionsSendTool(opts?: {
       });
 
       const sessionKeyParam = readStringParam(params, "sessionKey");
-      const labelParam = normalizeOptionalString(readStringParam(params, "label"));
-      const labelAgentIdParam = normalizeOptionalString(readStringParam(params, "agentId"));
+      const labelParam = readStringParam(params, "label")?.trim() || undefined;
+      const labelAgentIdParam = readStringParam(params, "agentId")?.trim() || undefined;
       if (sessionKeyParam && labelParam) {
         return jsonResult({
           runId: crypto.randomUUID(),
@@ -112,6 +129,12 @@ export function createSessionsSendTool(opts?: {
       }
 
       let sessionKey = sessionKeyParam;
+      if (!sessionKey && !labelParam && labelAgentIdParam) {
+        sessionKey = buildAgentMainSessionKey({
+          agentId: normalizeAgentId(labelAgentIdParam),
+          mainKey,
+        });
+      }
       if (!sessionKey && labelParam) {
         const requesterAgentId = resolveAgentIdFromSessionKey(effectiveRequesterKey);
         const requestedAgentId = labelAgentIdParam
@@ -156,9 +179,9 @@ export function createSessionsSendTool(opts?: {
             params: resolveParams,
             timeoutMs: 10_000,
           });
-          resolvedKey = normalizeOptionalString(resolved?.key) ?? "";
+          resolvedKey = typeof resolved?.key === "string" ? resolved.key.trim() : "";
         } catch (err) {
-          const msg = formatErrorMessage(err);
+          const msg = err instanceof Error ? err.message : String(err);
           if (restrictToSpawned) {
             return jsonResult({
               runId: crypto.randomUUID(),
@@ -252,19 +275,6 @@ export function createSessionsSendTool(opts?: {
         });
       }
 
-      // Capture the pre-run assistant snapshot before starting the nested run.
-      // Fast in-process test doubles and short-circuit agent paths can finish
-      // before we reach the post-run read, which would otherwise make the new
-      // reply look like the baseline and hide it from the caller.
-      const baselineReply =
-        timeoutSeconds === 0
-          ? undefined
-          : await readLatestAssistantReplySnapshot({
-              sessionKey: resolvedKey,
-              limit: SESSIONS_SEND_REPLY_HISTORY_LIMIT,
-              callGateway: gatewayCall,
-            });
-
       const agentMessageContext = buildAgentToAgentMessageContext({
         requesterSessionKey: opts?.agentSessionKey,
         requesterChannel: opts?.agentChannel,
@@ -333,32 +343,67 @@ export function createSessionsSendTool(opts?: {
         return start.result;
       }
       runId = start.runId;
-      const result = await waitForAgentRunAndReadUpdatedAssistantReply({
-        runId,
-        sessionKey: resolvedKey,
-        timeoutMs,
-        limit: SESSIONS_SEND_REPLY_HISTORY_LIMIT,
-        baseline: baselineReply,
-        callGateway: gatewayCall,
-      });
 
-      if (result.status === "timeout") {
+      const historyBefore = await gatewayCall<{ messages: Array<unknown> }>({
+        method: "chat.history",
+        params: { sessionKey: resolvedKey, limit: SESSIONS_SEND_REPLY_HISTORY_LIMIT },
+      });
+      const baselineReply = resolveLatestAssistantReplySnapshot(
+        stripToolMessages(Array.isArray(historyBefore?.messages) ? historyBefore.messages : []),
+      );
+
+      let waitStatus: string | undefined;
+      let waitError: string | undefined;
+      try {
+        const wait = await gatewayCall<{ status?: string; error?: string }>({
+          method: "agent.wait",
+          params: {
+            runId,
+            timeoutMs,
+          },
+          timeoutMs: timeoutMs + 2000,
+        });
+        waitStatus = typeof wait?.status === "string" ? wait.status : undefined;
+        waitError = typeof wait?.error === "string" ? wait.error : undefined;
+      } catch (err) {
+        const messageText =
+          err instanceof Error ? err.message : typeof err === "string" ? err : "error";
+        return jsonResult({
+          runId,
+          status: messageText.includes("gateway timeout") ? "timeout" : "error",
+          error: messageText,
+          sessionKey: displayKey,
+        });
+      }
+
+      if (waitStatus === "timeout") {
         return jsonResult({
           runId,
           status: "timeout",
-          error: result.error,
+          error: waitError,
           sessionKey: displayKey,
         });
       }
-      if (result.status === "error") {
+      if (waitStatus === "error") {
         return jsonResult({
           runId,
           status: "error",
-          error: result.error ?? "agent error",
+          error: waitError ?? "agent error",
           sessionKey: displayKey,
         });
       }
-      const reply = result.replyText;
+
+      const history = await gatewayCall<{ messages: Array<unknown> }>({
+        method: "chat.history",
+        params: { sessionKey: resolvedKey, limit: SESSIONS_SEND_REPLY_HISTORY_LIMIT },
+      });
+      const latestReply = resolveLatestAssistantReplySnapshot(
+        stripToolMessages(Array.isArray(history?.messages) ? history.messages : []),
+      );
+      const reply =
+        latestReply.text && latestReply.fingerprint !== baselineReply.fingerprint
+          ? latestReply.text
+          : undefined;
       startA2AFlow(reply ?? undefined);
 
       return jsonResult({

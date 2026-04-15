@@ -75,9 +75,11 @@ export function createTavilyExtractTool(api: OpenClawPluginApi) {
       }
       const includeImages = rawParams.include_images === true;
 
+      // Read live config so writeConfigFile updates take effect without restart.
+      const cfg = api.runtime?.config?.loadConfig?.() ?? api.config;
       return jsonResult(
         await runTavilyExtract({
-          cfg: api.config,
+          cfg,
           urls,
           query,
           extractDepth,

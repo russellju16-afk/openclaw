@@ -69,7 +69,9 @@ export function createTavilySearchTool(api: OpenClawPluginApi) {
       const query = readStringParam(rawParams, "query", { required: true });
       const searchDepth = readStringParam(rawParams, "search_depth") || undefined;
       const topic = readStringParam(rawParams, "topic") || undefined;
-      const maxResults = readNumberParam(rawParams, "max_results", { integer: true });
+      const maxResults = readNumberParam(rawParams, "max_results", {
+        integer: true,
+      });
       const includeAnswer = rawParams.include_answer === true;
       const timeRange = readStringParam(rawParams, "time_range") || undefined;
       const includeDomains = Array.isArray(rawParams.include_domains)
@@ -79,9 +81,11 @@ export function createTavilySearchTool(api: OpenClawPluginApi) {
         ? (rawParams.exclude_domains as string[]).filter(Boolean)
         : undefined;
 
+      // Read live config so writeConfigFile updates take effect without restart.
+      const cfg = api.runtime?.config?.loadConfig?.() ?? api.config;
       return jsonResult(
         await runTavilySearch({
-          cfg: api.config,
+          cfg,
           query,
           searchDepth,
           topic,

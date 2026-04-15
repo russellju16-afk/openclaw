@@ -1,7 +1,6 @@
 import { resolveAgentConfig } from "../../agents/agent-scope.js";
 import { getChannelPlugin, normalizeChannelId } from "../../channels/plugins/index.js";
 import type { AgentElevatedAllowFromConfig, OpenClawConfig } from "../../config/config.js";
-import { normalizeOptionalString } from "../../shared/string-coerce.js";
 import { normalizeStringEntries } from "../../shared/string-normalization.js";
 import type { MsgContext } from "../templating.js";
 import {
@@ -46,7 +45,7 @@ function resolveAllowFromFormatter(params: {
       accountId: params.accountId,
       allowFrom: values,
     })
-      .map((entry) => normalizeOptionalString(entry) ?? "")
+      .map((entry) => String(entry).trim())
       .filter(Boolean);
 }
 
@@ -77,39 +76,46 @@ function isApprovedElevatedSender(params: {
   const senderIdTokens = new Set<string>();
   const senderFromTokens = new Set<string>();
   const senderE164Tokens = new Set<string>();
-  const senderId = normalizeOptionalString(params.ctx.SenderId);
-  const senderFrom = normalizeOptionalString(params.ctx.From);
-  const senderE164 = normalizeOptionalString(params.ctx.SenderE164);
+  const senderStableTokens = new Set<string>();
 
-  if (senderId) {
+  if (params.ctx.SenderId?.trim()) {
     addFormattedTokens({
       formatAllowFrom: params.formatAllowFrom,
-      values: [senderId, stripSenderPrefix(senderId)].filter((value): value is string =>
-        Boolean(value),
-      ),
+      values: [params.ctx.SenderId, stripSenderPrefix(params.ctx.SenderId)].filter(Boolean),
       tokens: senderIdTokens,
     });
   }
-  if (senderFrom) {
+  if (params.ctx.From?.trim()) {
     addFormattedTokens({
       formatAllowFrom: params.formatAllowFrom,
-      values: [senderFrom, stripSenderPrefix(senderFrom)].filter((value): value is string =>
-        Boolean(value),
-      ),
+      values: [params.ctx.From, stripSenderPrefix(params.ctx.From)].filter(Boolean),
       tokens: senderFromTokens,
     });
   }
-  if (senderE164) {
+  if (params.ctx.SenderE164?.trim()) {
     addFormattedTokens({
       formatAllowFrom: params.formatAllowFrom,
-      values: [senderE164],
+      values: [params.ctx.SenderE164],
       tokens: senderE164Tokens,
+    });
+  }
+  const stableValues = [
+    params.ctx.SenderStableId,
+    params.ctx.SenderPreferredTarget,
+    ...(Array.isArray(params.ctx.SenderAltIds) ? params.ctx.SenderAltIds : []),
+  ].filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+  if (stableValues.length > 0) {
+    addFormattedTokens({
+      formatAllowFrom: params.formatAllowFrom,
+      values: stableValues,
+      tokens: senderStableTokens,
     });
   }
   const senderIdentityTokens = new Set<string>([
     ...senderIdTokens,
     ...senderFromTokens,
     ...senderE164Tokens,
+    ...senderStableTokens,
   ]);
 
   const senderNameTokens = buildMutableTokens(params.ctx.SenderName);

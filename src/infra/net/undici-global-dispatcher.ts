@@ -3,7 +3,12 @@ import { Agent, EnvHttpProxyAgent, getGlobalDispatcher, setGlobalDispatcher } fr
 import { isWSL2Sync } from "../wsl.js";
 import { hasEnvHttpProxyConfigured } from "./proxy-env.js";
 
-export const DEFAULT_UNDICI_STREAM_TIMEOUT_MS = 30 * 60 * 1000;
+// Upper bound for any single fetch body/header stream. Kept generous enough
+// for long-running tool-driven streams, but not so long that a silent stall
+// on a remote API hangs an interactive agent turn for half an hour before
+// surfacing. Lowered from 30min → 5min after a feishu group turn hung 17min
+// on an openai-codex setup-phase fetch with no error.
+export const DEFAULT_UNDICI_STREAM_TIMEOUT_MS = 5 * 60 * 1000;
 
 const AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT_MS = 300;
 

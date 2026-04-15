@@ -10,6 +10,13 @@ export type FeishuDirectoryPeer = {
   kind: "user";
   id: string;
   name?: string;
+  userId?: string;
+  unionId?: string;
+  stablePersonKey?: string;
+  preferredSendTarget?: string;
+  enterpriseEmail?: string;
+  mobile?: string;
+  departmentIds?: string[];
 };
 
 export type FeishuDirectoryGroup = {

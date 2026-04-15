@@ -4,6 +4,7 @@ import type { OpenClawPluginApi } from "../runtime-api.js";
 import { listEnabledFeishuAccounts } from "./accounts.js";
 import { FeishuChatSchema, type FeishuChatParams } from "./chat-schema.js";
 import { createFeishuClient } from "./client.js";
+import { resolveFeishuPreferredSendTarget, resolveFeishuStablePersonKey } from "./identity.js";
 import { resolveToolsConfig } from "./tools-config.js";
 
 function json(data: unknown) {
@@ -118,6 +119,17 @@ export async function getFeishuMemberInfo(
     description: user?.description,
     job_title: user?.job_title,
     geo: user?.geo,
+    stable_person_key: resolveFeishuStablePersonKey({
+      union_id: user?.union_id,
+      user_id: user?.user_id,
+      enterprise_email: user?.enterprise_email,
+      email: user?.email,
+      mobile: user?.mobile,
+    }),
+    preferred_send_target: resolveFeishuPreferredSendTarget({
+      open_id: user?.open_id,
+      user_id: user?.user_id,
+    }),
   };
 }
 
@@ -146,7 +158,10 @@ export function registerFeishuChatTools(api: OpenClawPluginApi) {
     {
       name: "feishu_chat",
       label: "Feishu Chat",
-      description: "Feishu chat operations. Actions: members, info, member_info",
+      displaySummary:
+        "Resolve Feishu member IDs to human names, or inspect chat and member details.",
+      description:
+        "Inspect Feishu chats and resolve Feishu member IDs to real profile details. Use action `member_info` to translate an `open_id`, `user_id`, or `union_id` into a person's name before replying. When available, use `preferred_send_target` for outbound contact because it prefers cross-app-stable IDs. Actions: members, info, member_info.",
       parameters: FeishuChatSchema,
       async execute(_toolCallId, params) {
         const p = params as FeishuChatParams;

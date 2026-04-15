@@ -35,7 +35,7 @@ describe("resolveMcpTransportConfig", () => {
         Authorization: "Bearer token",
         "X-Count": "42",
       },
-      description: "https://mcp.example.com/sse",
+      description: "sse https://mcp.example.com/sse",
       connectionTimeoutMs: 30_000,
     });
   });
@@ -50,6 +50,7 @@ describe("resolveMcpTransportConfig", () => {
       kind: "http",
       transportType: "streamable-http",
       url: "https://mcp.example.com/http",
+      description: "streamable-http https://mcp.example.com/http",
     });
   });
 });

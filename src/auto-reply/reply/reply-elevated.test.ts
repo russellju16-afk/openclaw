@@ -88,4 +88,15 @@ describe("resolveElevatedPermissions", () => {
       },
     });
   });
+
+  it("authorizes stable sender identities and aliases", () => {
+    expectAllowFromDecision({
+      allowFrom: ["on_russell"],
+      allowed: true,
+      ctx: {
+        SenderStableId: "on_russell",
+        SenderAltIds: ["ou_russell_alt", "u_russell", "on_russell"],
+      } as Partial<MsgContext>,
+    });
+  });
 });

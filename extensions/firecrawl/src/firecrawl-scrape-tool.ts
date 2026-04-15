@@ -22,7 +22,9 @@ function optionalStringEnum<const T extends readonly string[]>(
 
 const FirecrawlScrapeToolSchema = Type.Object(
   {
-    url: Type.String({ description: "HTTP or HTTPS URL to scrape via Firecrawl." }),
+    url: Type.String({
+      description: "HTTP or HTTPS URL to scrape via Firecrawl.",
+    }),
     extractMode: optionalStringEnum(["markdown", "text"] as const, {
       description: 'Extraction mode ("markdown" or "text"). Default: markdown.',
     }),
@@ -72,8 +74,12 @@ export function createFirecrawlScrapeTool(api: OpenClawPluginApi) {
       const url = readStringParam(rawParams, "url", { required: true });
       const extractMode =
         readStringParam(rawParams, "extractMode") === "text" ? "text" : "markdown";
-      const maxChars = readNumberParam(rawParams, "maxChars", { integer: true });
-      const maxAgeMs = readNumberParam(rawParams, "maxAgeMs", { integer: true });
+      const maxChars = readNumberParam(rawParams, "maxChars", {
+        integer: true,
+      });
+      const maxAgeMs = readNumberParam(rawParams, "maxAgeMs", {
+        integer: true,
+      });
       const timeoutSeconds = readNumberParam(rawParams, "timeoutSeconds", {
         integer: true,
       });
@@ -87,9 +93,11 @@ export function createFirecrawlScrapeTool(api: OpenClawPluginApi) {
       const storeInCache =
         typeof rawParams.storeInCache === "boolean" ? rawParams.storeInCache : undefined;
 
+      // Read live config so writeConfigFile updates take effect without restart.
+      const cfg = api.runtime?.config?.loadConfig?.() ?? api.config;
       return jsonResult(
         await runFirecrawlScrape({
-          cfg: api.config,
+          cfg,
           url,
           extractMode,
           maxChars,

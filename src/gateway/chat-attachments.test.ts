@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import * as mediaStore from "../media/store.js";
 import {
   buildMessageWithAttachments,
   type ChatAttachment,
@@ -136,6 +137,45 @@ describe("parseMessageWithAttachments", () => {
     expect(parsed.images[0]?.mimeType).toBe("image/png");
     expect(parsed.images[0]?.data).toBe(PNG_1x1);
     expect(logs.some((l) => /non-image/i.test(l))).toBe(true);
+  });
+
+  it("preserves image attachments as media refs for text-only model runs", async () => {
+    const saveSpy = vi.spyOn(mediaStore, "saveMediaBuffer").mockResolvedValue({
+      id: "saved-image.png",
+      path: "/tmp/saved-image.png",
+      size: 68,
+      contentType: "image/png",
+    });
+    try {
+      const logs: string[] = [];
+      const parsed = await parseMessageWithAttachments(
+        "see this",
+        [
+          {
+            type: "image",
+            mimeType: "image/png",
+            fileName: "dot.png",
+            content: PNG_1x1,
+          },
+        ],
+        { supportsImages: false, log: { warn: (warning) => logs.push(warning) } },
+      );
+      expect(parsed.images).toEqual([]);
+      expect(parsed.imageOrder).toEqual(["offloaded"]);
+      expect(parsed.offloadedRefs).toEqual([
+        expect.objectContaining({
+          id: "saved-image.png",
+          path: "/tmp/saved-image.png",
+          mimeType: "image/png",
+          label: "dot.png",
+          mediaRef: "media://inbound/saved-image.png",
+        }),
+      ]);
+      expect(parsed.message).toContain("[media attached: media://inbound/saved-image.png]");
+      expect(logs).toEqual([]);
+    } finally {
+      saveSpy.mockRestore();
+    }
   });
 });
 

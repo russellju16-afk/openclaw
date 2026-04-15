@@ -7,17 +7,23 @@ export const FeishuChatSchema = Type.Object({
   action: Type.Unsafe<(typeof CHAT_ACTION_VALUES)[number]>({
     type: "string",
     enum: [...CHAT_ACTION_VALUES],
-    description: "Action to run: members | info | member_info",
+    description:
+      "Action to run. Use `member_info` to resolve a Feishu person ID to the person's name/profile. Actions: members | info | member_info",
   }),
   chat_id: Type.Optional(Type.String({ description: "Chat ID (from URL or event payload)" })),
-  member_id: Type.Optional(Type.String({ description: "Member ID for member_info lookups" })),
+  member_id: Type.Optional(
+    Type.String({
+      description:
+        "Feishu member ID for `member_info` lookups, such as an `open_id` like `ou_xxx`.",
+    }),
+  ),
   page_size: Type.Optional(Type.Number({ description: "Page size (1-100, default 50)" })),
   page_token: Type.Optional(Type.String({ description: "Pagination token" })),
   member_id_type: Type.Optional(
     Type.Unsafe<(typeof MEMBER_ID_TYPE_VALUES)[number]>({
       type: "string",
       enum: [...MEMBER_ID_TYPE_VALUES],
-      description: "Member ID type (default: open_id)",
+      description: "Member ID type for `member_info` (default: open_id)",
     }),
   ),
 });

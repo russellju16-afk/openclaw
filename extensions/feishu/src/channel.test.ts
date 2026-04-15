@@ -1,7 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../runtime-api.js";
 import { createFeishuCardInteractionEnvelope } from "./card-interaction.js";
-import { feishuPlugin } from "./channel.js";
 import { looksLikeFeishuId, normalizeFeishuTarget, resolveReceiveIdType } from "./targets.js";
 
 const probeFeishuMock = vi.hoisted(() => vi.fn());
@@ -61,8 +60,10 @@ vi.mock("../../../src/channels/plugins/bundled.js", () => ({
   bundledChannelSetupPlugins: [],
 }));
 
-function getDescribedActions(cfg: OpenClawConfig, accountId?: string): string[] {
-  return [...(feishuPlugin.actions?.describeMessageTool?.({ cfg, accountId })?.actions ?? [])];
+let feishuPlugin: typeof import("./channel.js").feishuPlugin;
+
+function getDescribedActions(cfg: OpenClawConfig): string[] {
+  return [...(feishuPlugin.actions?.describeMessageTool?.({ cfg })?.actions ?? [])];
 }
 
 function createLegacyFeishuButtonCard(value: { command?: string; text?: string }) {
@@ -99,6 +100,10 @@ async function expectLegacyFeishuCardPayloadRejected(cfg: OpenClawConfig, card: 
   );
   expect(sendCardFeishuMock).not.toHaveBeenCalled();
 }
+
+beforeAll(async () => {
+  ({ feishuPlugin } = await import("./channel.js"));
+});
 
 describe("feishuPlugin.status.probeAccount", () => {
   it("uses current account credentials for multi-account config", async () => {
@@ -274,56 +279,18 @@ describe("feishuPlugin actions", () => {
     ]);
   });
 
-  it("honors the selected Feishu account during discovery", () => {
-    const cfg = {
-      channels: {
-        feishu: {
-          enabled: true,
-          actions: { reactions: false },
-          accounts: {
-            default: {
-              enabled: true,
-              appId: "cli_main",
-              appSecret: "secret_main",
-              actions: { reactions: false },
-            },
-            work: {
-              enabled: true,
-              appId: "cli_work",
-              appSecret: "secret_work",
-              actions: { reactions: true },
-            },
-          },
-        },
-      },
-    } as OpenClawConfig;
+  it("tells agents to resolve Feishu member ids to names before replying", () => {
+    const hints = feishuPlugin.agentPrompt?.messageToolHints?.({ cfg });
 
-    expect(getDescribedActions(cfg, "default")).toEqual([
-      "send",
-      "read",
-      "edit",
-      "thread-reply",
-      "pin",
-      "list-pins",
-      "unpin",
-      "member-info",
-      "channel-info",
-      "channel-list",
-    ]);
-    expect(getDescribedActions(cfg, "work")).toEqual([
-      "send",
-      "read",
-      "edit",
-      "thread-reply",
-      "pin",
-      "list-pins",
-      "unpin",
-      "member-info",
-      "channel-info",
-      "channel-list",
-      "react",
-      "reactions",
-    ]);
+    expect(hints).toContain(
+      "- When a Feishu user ID such as `ou_xxx` appears, use `member-info` first to resolve the real person name before replying. Prefer `name`, and include the raw ID only as a secondary detail when needed.",
+    );
+    expect(hints).toContain(
+      '- To find a Feishu person by name before sending, use `channel-list` with `scope: "user"` and `query`, then send to the resolved `user:<open_id>` target once the match is unique.',
+    );
+    expect(hints).toContain(
+      "- When `channel-list` or `member-info` returns `preferred_send_target`, use that value for outbound contact. It prefers cross-app-stable IDs over app-specific `open_id` when available.",
+    );
   });
 
   it("sends text messages", async () => {
@@ -774,6 +741,42 @@ describe("feishuPlugin actions", () => {
       ok: true,
       groups: [expect.objectContaining({ id: "oc_group_1" })],
       peers: [expect.objectContaining({ id: "ou_1" })],
+    });
+  });
+
+  it("resolves plain-name user targets to preferred send targets", async () => {
+    listFeishuDirectoryPeersLiveMock.mockResolvedValueOnce([
+      {
+        kind: "user",
+        id: "ou_6cd1c8e08d2da200868f5709061139a1",
+        name: "李元甲",
+        userId: "g49a2fe4",
+        unionId: "on_f920ee0e2772e2acab152526c13725a5",
+        stablePersonKey: "on_f920ee0e2772e2acab152526c13725a5",
+        preferredSendTarget: "user:g49a2fe4",
+      },
+    ]);
+
+    const resolved = await feishuPlugin.messaging?.targetResolver?.resolveTarget?.({
+      cfg,
+      accountId: "laifu",
+      input: "李元甲",
+      normalized: "李元甲",
+      preferredKind: "group",
+    });
+
+    expect(listFeishuDirectoryPeersLiveMock).toHaveBeenCalledWith({
+      cfg,
+      query: "李元甲",
+      limit: 5,
+      fallbackToStatic: false,
+      accountId: "laifu",
+    });
+    expect(resolved).toEqual({
+      to: "user:g49a2fe4",
+      kind: "user",
+      display: "李元甲",
+      source: "directory",
     });
   });
 

@@ -115,7 +115,9 @@ const DiffsToolSchema = Type.Object(
       }),
     ),
     expandUnchanged: Type.Optional(
-      Type.Boolean({ description: "Expand unchanged sections instead of collapsing them." }),
+      Type.Boolean({
+        description: "Expand unchanged sections instead of collapsing them.",
+      }),
     ),
     ttlSeconds: Type.Optional(
       Type.Number({
@@ -156,6 +158,8 @@ export function createDiffsTool(params: {
     parameters: DiffsToolSchema,
     execute: async (_toolCallId, rawParams) => {
       const toolParams = rawParams as DiffsToolRawParams;
+      // Read live config so updates made via writeConfigFile are observed.
+      const liveConfig = params.api.runtime?.config?.loadConfig?.() ?? params.api.config;
       const artifactContext = buildArtifactContext(params.context);
       const input = normalizeDiffInput(toolParams);
       const mode = normalizeMode(toolParams.mode, params.defaults.mode);
@@ -189,7 +193,7 @@ export function createDiffsTool(params: {
       );
 
       const screenshotter =
-        params.screenshotter ?? new PlaywrightDiffScreenshotter({ config: params.api.config });
+        params.screenshotter ?? new PlaywrightDiffScreenshotter({ config: liveConfig });
 
       if (isArtifactOnlyMode(mode)) {
         const artifactFile = await renderDiffArtifactFile({
@@ -238,7 +242,7 @@ export function createDiffsTool(params: {
       });
 
       const viewerUrl = buildViewerUrl({
-        config: params.api.config,
+        config: liveConfig,
         viewerPath: artifact.viewerPath,
         baseUrl: normalizeBaseUrl(toolParams.baseUrl) ?? params.viewerBaseUrl,
       });
@@ -392,7 +396,12 @@ async function renderDiffArtifactFile(params: {
   image: DiffRenderOptions["image"];
   ttlMs?: number;
   context?: DiffArtifactContext;
-}): Promise<{ path: string; bytes: number; artifactId?: string; expiresAt?: string }> {
+}): Promise<{
+  path: string;
+  bytes: number;
+  artifactId?: string;
+  expiresAt?: string;
+}> {
   const standaloneArtifact = params.artifactId
     ? undefined
     : await params.store.createStandaloneFileArtifact({

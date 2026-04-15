@@ -28,6 +28,24 @@ function normalizeMediaType(value: unknown): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
+function normalizeStringList(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const unique = new Set<string>();
+  for (const entry of value) {
+    if (typeof entry !== "string") {
+      continue;
+    }
+    const trimmed = entry.trim();
+    if (!trimmed) {
+      continue;
+    }
+    unique.add(trimmed);
+  }
+  return unique.size > 0 ? [...unique] : undefined;
+}
+
 function countMediaEntries(ctx: MsgContext): number {
   const pathCount = Array.isArray(ctx.MediaPaths) ? ctx.MediaPaths.length : 0;
   const urlCount = Array.isArray(ctx.MediaUrls) ? ctx.MediaUrls.length : 0;
@@ -49,6 +67,9 @@ export function finalizeInboundContext<T extends Record<string, unknown>>(
   normalized.Transcript = normalizeTextField(normalized.Transcript);
   normalized.ThreadStarterBody = normalizeTextField(normalized.ThreadStarterBody);
   normalized.ThreadHistoryBody = normalizeTextField(normalized.ThreadHistoryBody);
+  normalized.SenderStableId = normalizeTextField(normalized.SenderStableId);
+  normalized.SenderPreferredTarget = normalizeTextField(normalized.SenderPreferredTarget);
+  normalized.SenderAltIds = normalizeStringList(normalized.SenderAltIds);
   if (Array.isArray(normalized.UntrustedContext)) {
     const normalizedUntrusted = normalized.UntrustedContext.map((entry) =>
       sanitizeInboundSystemTags(normalizeInboundTextNewlines(entry)),

@@ -1,5 +1,4 @@
 import type * as Lark from "@larksuiteoapi/node-sdk";
-import { normalizeOptionalString } from "openclaw/plugin-sdk/text-runtime";
 import type { OpenClawPluginApi } from "../runtime-api.js";
 import {
   listFeishuAccountIds,
@@ -12,57 +11,77 @@ import type { FeishuToolsConfig, ResolvedFeishuAccount } from "./types.js";
 
 type AccountAwareParams = { accountId?: string };
 
+type ToolAccountApi = Pick<OpenClawPluginApi, "config" | "runtime">;
+
+function normalizeOptionalAccountId(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function resolveLiveConfig(api: ToolAccountApi): OpenClawPluginApi["config"] {
+  // Read live config so writeConfigFile updates take effect without restart.
+  return api.runtime?.config?.loadConfig?.() ?? api.config;
+}
+
+function readConfiguredDefaultAccountId(config: OpenClawPluginApi["config"]): string | undefined {
+  const value = (config?.channels?.feishu as { defaultAccount?: unknown } | undefined)
+    ?.defaultAccount;
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  return normalizeOptionalAccountId(value);
+}
+
 function resolveImplicitToolAccountId(params: {
-  api: Pick<OpenClawPluginApi, "config">;
+  api: ToolAccountApi;
   executeParams?: AccountAwareParams;
   defaultAccountId?: string;
 }): string | undefined {
-  const explicitAccountId = normalizeOptionalString(params.executeParams?.accountId);
+  const explicitAccountId = normalizeOptionalAccountId(params.executeParams?.accountId);
   if (explicitAccountId) {
     return explicitAccountId;
   }
 
-  const contextualAccountId = normalizeOptionalString(params.defaultAccountId);
-  if (
-    contextualAccountId &&
-    listFeishuAccountIds(params.api.config).includes(contextualAccountId)
-  ) {
-    const contextualAccount = resolveFeishuAccount({
-      cfg: params.api.config,
-      accountId: contextualAccountId,
-    });
-    if (contextualAccount.enabled) {
-      return contextualAccountId;
-    }
-  }
+  const liveConfig = resolveLiveConfig(params.api);
 
-  const configuredDefaultAccountId = normalizeOptionalString(
-    (params.api.config?.channels?.feishu as { defaultAccount?: unknown } | undefined)
-      ?.defaultAccount,
-  );
+  const configuredDefaultAccountId = readConfiguredDefaultAccountId(liveConfig);
   if (configuredDefaultAccountId) {
     return configuredDefaultAccountId;
   }
 
-  return undefined;
+  const contextualAccountId = normalizeOptionalAccountId(params.defaultAccountId);
+  if (!contextualAccountId) {
+    return undefined;
+  }
+
+  if (!listFeishuAccountIds(liveConfig).includes(contextualAccountId)) {
+    return undefined;
+  }
+
+  const contextualAccount = resolveFeishuAccount({
+    cfg: liveConfig,
+    accountId: contextualAccountId,
+  });
+  return contextualAccount.enabled ? contextualAccountId : undefined;
 }
 
 export function resolveFeishuToolAccount(params: {
-  api: Pick<OpenClawPluginApi, "config">;
+  api: ToolAccountApi;
   executeParams?: AccountAwareParams;
   defaultAccountId?: string;
 }): ResolvedFeishuAccount {
-  if (!params.api.config) {
+  const liveConfig = resolveLiveConfig(params.api);
+  if (!liveConfig) {
     throw new Error("Feishu config unavailable");
   }
   return resolveFeishuRuntimeAccount({
-    cfg: params.api.config,
+    cfg: liveConfig,
     accountId: resolveImplicitToolAccountId(params),
   });
 }
 
 export function createFeishuToolClient(params: {
-  api: Pick<OpenClawPluginApi, "config">;
+  api: ToolAccountApi;
   executeParams?: AccountAwareParams;
   defaultAccountId?: string;
 }): Lark.Client {

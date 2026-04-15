@@ -329,18 +329,22 @@ describe("buildServiceEnvironment", () => {
     const env = buildServiceEnvironment({
       env: {
         HOME: "/home/user",
+        WECOM_API_PROXY: " http://127.0.0.1:13128 ",
         HTTP_PROXY: " http://proxy.local:7890 ",
         HTTPS_PROXY: "https://proxy.local:7890",
         NO_PROXY: "localhost,127.0.0.1",
+        wecom_api_proxy: "http://127.0.0.1:23128",
         http_proxy: "http://proxy.local:7890",
         all_proxy: "socks5://proxy.local:1080",
       },
       port: 18789,
     });
 
+    expect(env.WECOM_API_PROXY).toBe("http://127.0.0.1:13128");
     expect(env.HTTP_PROXY).toBe("http://proxy.local:7890");
     expect(env.HTTPS_PROXY).toBe("https://proxy.local:7890");
     expect(env.NO_PROXY).toBe("localhost,127.0.0.1");
+    expect(env.wecom_api_proxy).toBe("http://127.0.0.1:23128");
     expect(env.http_proxy).toBe("http://proxy.local:7890");
     expect(env.all_proxy).toBe("socks5://proxy.local:1080");
   });
@@ -402,12 +406,16 @@ describe("buildNodeServiceEnvironment", () => {
     const env = buildNodeServiceEnvironment({
       env: {
         HOME: "/home/user",
+        WECOM_API_PROXY: " http://127.0.0.1:13128 ",
         HTTPS_PROXY: " https://proxy.local:7890 ",
+        wecom_api_proxy: " http://127.0.0.1:23128 ",
         no_proxy: "localhost,127.0.0.1",
       },
     });
 
+    expect(env.WECOM_API_PROXY).toBe("http://127.0.0.1:13128");
     expect(env.HTTPS_PROXY).toBe("https://proxy.local:7890");
+    expect(env.wecom_api_proxy).toBe("http://127.0.0.1:23128");
     expect(env.no_proxy).toBe("localhost,127.0.0.1");
   });
 

@@ -647,6 +647,51 @@ describe("handleFeishuMessage command authorization", () => {
     );
   });
 
+  it("routes direct Feishu sessions by stable sender identity when available", async () => {
+    const cfg: ClawdbotConfig = {
+      channels: {
+        feishu: {
+          dmPolicy: "open",
+        },
+      },
+    } as ClawdbotConfig;
+
+    const event: FeishuMessageEvent = {
+      sender: {
+        sender_id: {
+          open_id: "ou-russell-alt",
+          user_id: "u-russell",
+          union_id: "on-russell",
+        },
+      },
+      message: {
+        message_id: "msg-stable-id",
+        chat_id: "oc-dm",
+        chat_type: "p2p",
+        message_type: "text",
+        content: JSON.stringify({ text: "hello" }),
+      },
+    };
+
+    await dispatchMessage({ cfg, event });
+
+    expect(mockResolveAgentRoute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        peer: {
+          kind: "direct",
+          id: "on-russell",
+        },
+      }),
+    );
+    expect(mockFinalizeInboundContext).toHaveBeenCalledWith(
+      expect.objectContaining({
+        SenderId: "ou-russell-alt",
+        SenderStableId: "on-russell",
+        SenderAltIds: ["ou-russell-alt", "u-russell", "on-russell"],
+      }),
+    );
+  });
+
   it("reads pairing allow store for non-command DMs when dmPolicy is pairing", async () => {
     mockShouldComputeCommandAuthorized.mockReturnValue(false);
     mockReadAllowFromStore.mockResolvedValue(["ou-attacker"]);

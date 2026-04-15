@@ -141,6 +141,58 @@ export function formatTargetDisplay(params: {
   return withoutProvider;
 }
 
+function maskCandidateMobile(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.length < 7) {
+    return trimmed;
+  }
+  return `${trimmed.slice(0, 3)}****${trimmed.slice(-4)}`;
+}
+
+function formatCandidateDetails(entry: ChannelDirectoryEntry): string[] {
+  const raw = entry.raw;
+  if (!raw || typeof raw !== "object") {
+    return [];
+  }
+  const details: string[] = [];
+  const record = raw as {
+    preferredSendTarget?: unknown;
+    enterpriseEmail?: unknown;
+    mobile?: unknown;
+    openId?: unknown;
+    userId?: unknown;
+  };
+  if (typeof record.enterpriseEmail === "string" && record.enterpriseEmail.trim()) {
+    details.push(record.enterpriseEmail.trim());
+  }
+  if (typeof record.mobile === "string" && record.mobile.trim()) {
+    details.push(`mobile:${maskCandidateMobile(record.mobile)}`);
+  }
+  if (typeof record.preferredSendTarget === "string" && record.preferredSendTarget.trim()) {
+    details.push(record.preferredSendTarget.trim());
+  } else if (typeof record.userId === "string" && record.userId.trim()) {
+    details.push(`user:${record.userId.trim()}`);
+  } else if (typeof record.openId === "string" && record.openId.trim()) {
+    details.push(`open_id:${record.openId.trim()}`);
+  }
+  return details;
+}
+
+function buildAmbiguousCandidatesMessage(params: {
+  channel: ChannelId;
+  entries: ChannelDirectoryEntry[];
+}): string {
+  const lines = params.entries.slice(0, 5).map((entry, index) => {
+    const display =
+      entry.name?.trim() ||
+      entry.handle?.trim() ||
+      formatTargetDisplay({ channel: params.channel, target: entry.id, kind: entry.kind });
+    const details = formatCandidateDetails(entry);
+    return `${index + 1}. ${display}${details.length > 0 ? ` (${details.join(", ")})` : ""}`;
+  });
+  return lines.length > 0 ? ` Candidates: ${lines.join("; ")}` : "";
+}
+
 function detectTargetKind(
   channel: ChannelId,
   raw: string,
@@ -421,7 +473,14 @@ export async function resolveMessagingTarget(params: {
     }
     return {
       ok: false,
-      error: ambiguousTargetError(providerLabel, raw, hint),
+      error: new Error(
+        `${ambiguousTargetError(providerLabel, raw, hint).message}${buildAmbiguousCandidatesMessage(
+          {
+            channel: params.channel,
+            entries: match.entries,
+          },
+        )}`,
+      ),
       candidates: match.entries,
     };
   }

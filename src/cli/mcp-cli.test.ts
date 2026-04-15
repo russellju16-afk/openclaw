@@ -82,6 +82,57 @@ describe("mcp cli", () => {
     });
   });
 
+  it("shows an effective summary for one configured MCP server", async () => {
+    await withTempHome("openclaw-cli-mcp-home-", async () => {
+      const workspaceDir = await createWorkspace();
+      vi.spyOn(process, "cwd").mockReturnValue(workspaceDir);
+
+      await runMcpCommand([
+        "mcp",
+        "set",
+        "context7",
+        '{"command":"node","args":["server with spaces.mjs","--flag=two words"],"cwd":"/tmp/work dir","connectionTimeoutMs":1234}',
+      ]);
+
+      mockLog.mockClear();
+      await runMcpCommand(["mcp", "show", "context7"]);
+
+      expect(mockLog).toHaveBeenCalledWith(expect.stringContaining("Effective transport: stdio"));
+      expect(mockLog).toHaveBeenCalledWith(
+        expect.stringContaining('Launch: node "server with spaces.mjs" "--flag=two words"'),
+      );
+      expect(mockLog).toHaveBeenCalledWith(
+        expect.stringContaining('Working directory: "/tmp/work dir"'),
+      );
+      expect(mockLog).toHaveBeenCalledWith(expect.stringContaining("Connection timeout: 1234ms"));
+    });
+  });
+
+  it("shows transport summaries when listing configured MCP servers", async () => {
+    await withTempHome("openclaw-cli-mcp-home-", async () => {
+      const workspaceDir = await createWorkspace();
+      vi.spyOn(process, "cwd").mockReturnValue(workspaceDir);
+
+      await runMcpCommand(["mcp", "set", "context7", '{"command":"uvx","args":["context7-mcp"]}']);
+      await runMcpCommand([
+        "mcp",
+        "set",
+        "remote",
+        '{"url":"https://mcp.example.com/http","transport":"streamable-http"}',
+      ]);
+
+      mockLog.mockClear();
+      await runMcpCommand(["mcp", "list"]);
+
+      expect(mockLog).toHaveBeenCalledWith(
+        expect.stringContaining("- context7 [stdio] uvx context7-mcp"),
+      );
+      expect(mockLog).toHaveBeenCalledWith(
+        expect.stringContaining("- remote [streamable-http] https://mcp.example.com/http"),
+      );
+    });
+  });
+
   it("fails when removing an unknown MCP server", async () => {
     await withTempHome("openclaw-cli-mcp-home-", async () => {
       const workspaceDir = await createWorkspace();

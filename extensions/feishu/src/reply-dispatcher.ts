@@ -5,18 +5,20 @@ import {
   resolveTextChunksWithFallback,
   sendMediaWithLeadingCaption,
 } from "openclaw/plugin-sdk/reply-payload";
-import { resolveFeishuRuntimeAccount } from "./accounts.js";
-import { createFeishuClient } from "./client.js";
-import { sendMediaFeishu } from "./media.js";
-import type { MentionTarget } from "./mention-target.types.js";
-import { buildMentionedCardContent } from "./mention.js";
 import {
   createReplyPrefixContext,
   type ClawdbotConfig,
   type OutboundIdentity,
   type ReplyPayload,
   type RuntimeEnv,
-} from "./reply-dispatcher-runtime-api.js";
+} from "../runtime-api.js";
+import { resolveFeishuRuntimeAccount } from "./accounts.js";
+import { resolveFeishuSenderName } from "./bot-sender-name.js";
+import { createFeishuClient } from "./client.js";
+import { sendMediaFeishu } from "./media.js";
+import type { MentionTarget } from "./mention.js";
+import { buildMentionedCardContent } from "./mention.js";
+import { guardOutboundPII } from "./pii-guard.js";
 import { getFeishuRuntime } from "./runtime.js";
 import { sendMessageFeishu, sendStructuredCardFeishu, type CardHeaderConfig } from "./send.js";
 import { FeishuStreamingSession, mergeStreamingText } from "./streaming-card.js";
@@ -32,6 +34,7 @@ function shouldUseCard(text: string): boolean {
  * Messages older than this are likely replays after context compaction (#30418). */
 const TYPING_INDICATOR_MAX_AGE_MS = 2 * 60_000;
 const MS_EPOCH_MIN = 1_000_000_000_000;
+const FEISHU_OPEN_ID_PATTERN = /(?<![A-Za-z0-9_:/-])(ou_[a-z0-9]{8,})(?![A-Za-z0-9_])/g;
 
 function normalizeEpochMs(timestamp: number | undefined): number | undefined {
   if (!Number.isFinite(timestamp) || timestamp === undefined || timestamp <= 0) {
@@ -40,6 +43,42 @@ function normalizeEpochMs(timestamp: number | undefined): number | undefined {
   // Defensive normalization: some payloads use seconds, others milliseconds.
   // Values below 1e12 are treated as epoch-seconds.
   return timestamp < MS_EPOCH_MIN ? timestamp * 1000 : timestamp;
+}
+
+async function resolveFeishuNamesInText(params: {
+  text: string;
+  account: ReturnType<typeof resolveFeishuRuntimeAccount>;
+  runtime: RuntimeEnv;
+}): Promise<string> {
+  const matches = [...params.text.matchAll(FEISHU_OPEN_ID_PATTERN)];
+  if (matches.length === 0) {
+    return params.text;
+  }
+
+  const uniqueOpenIds = [...new Set(matches.map((match) => match[1]).filter(Boolean))];
+  const resolvedNames = new Map<string, string>();
+
+  await Promise.all(
+    uniqueOpenIds.map(async (openId) => {
+      const result = await resolveFeishuSenderName({
+        account: params.account,
+        senderId: openId,
+        log: (...args) => params.runtime.log?.(...args),
+      });
+      const name = result.name?.trim();
+      if (name) {
+        resolvedNames.set(openId, name);
+      }
+    }),
+  );
+
+  if (resolvedNames.size === 0) {
+    return params.text;
+  }
+
+  return params.text.replace(FEISHU_OPEN_ID_PATTERN, (raw, openId: string) => {
+    return resolvedNames.get(openId) ?? raw;
+  });
 }
 
 /** Build a card header from agent identity config. */
@@ -77,7 +116,6 @@ export type CreateFeishuReplyDispatcherParams = {
   agentId: string;
   runtime: RuntimeEnv;
   chatId: string;
-  allowReasoningPreview?: boolean;
   replyToMessageId?: string;
   /** When true, preserve typing indicator on reply target but send messages without reply metadata */
   skipReplyToInMessages?: boolean;
@@ -184,12 +222,14 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     fallbackLimit: 4000,
   });
   const chunkMode = core.channel.text.resolveChunkMode(cfg, "feishu");
-  const tableMode = core.channel.text.resolveMarkdownTableMode({ cfg, channel: "feishu" });
+  const tableMode = core.channel.text.resolveMarkdownTableMode({
+    cfg,
+    channel: "feishu",
+  });
   const renderMode = account.config?.renderMode ?? "auto";
   // Card streaming may miss thread affinity in topic contexts; use direct replies there.
   const streamingEnabled =
     !threadReplyMode && account.config?.streaming !== false && renderMode !== "raw";
-  const reasoningPreviewEnabled = streamingEnabled && params.allowReasoningPreview === true;
 
   let streaming: FeishuStreamingSession | null = null;
   let streamText = "";
@@ -201,9 +241,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
   type StreamTextUpdateMode = "snapshot" | "delta";
 
   const formatReasoningPrefix = (thinking: string): string => {
-    if (!thinking) {
-      return "";
-    }
+    if (!thinking) {return "";}
     const withoutLabel = thinking.replace(/^Reasoning:\n/, "");
     const plain = withoutLabel.replace(/^_(.*)_$/gm, "$1");
     const lines = plain.split("\n").map((line) => `> ${line}`);
@@ -212,15 +250,9 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
 
   const buildCombinedStreamText = (thinking: string, answer: string): string => {
     const parts: string[] = [];
-    if (thinking) {
-      parts.push(formatReasoningPrefix(thinking));
-    }
-    if (thinking && answer) {
-      parts.push("\n\n---\n\n");
-    }
-    if (answer) {
-      parts.push(answer);
-    }
+    if (thinking) {parts.push(formatReasoningPrefix(thinking));}
+    if (thinking && answer) {parts.push("\n\n---\n\n");}
+    if (answer) {parts.push(answer);}
     return parts.join("");
   };
 
@@ -258,9 +290,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
   };
 
   const queueReasoningUpdate = (nextThinking: string) => {
-    if (!nextThinking) {
-      return;
-    }
+    if (!nextThinking) {return;}
     reasoningText = nextThinking;
     flushStreamingCardUpdate(buildCombinedStreamText(reasoningText, streamText));
   };
@@ -272,7 +302,11 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     streamingStartPromise = (async () => {
       const creds =
         account.appId && account.appSecret
-          ? { appId: account.appId, appSecret: account.appSecret, domain: account.domain }
+          ? {
+              appId: account.appId,
+              appSecret: account.appSecret,
+              domain: account.domain,
+            }
           : null;
       if (!creds) {
         return;
@@ -306,6 +340,20 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     await partialUpdateQueue;
     if (streaming?.isActive()) {
       let text = buildCombinedStreamText(reasoningText, streamText);
+      // Security (V-05): mask any PII the agent may have included in its reply
+      // before the final streamed text is committed to the customer's Feishu chat.
+      const piiResult = guardOutboundPII(text);
+      if (piiResult.detections.length > 0) {
+        params.runtime.log?.(
+          `feishu[${account.accountId}] pii-guard: masked ${piiResult.detections.length} PII item(s) in streaming reply (types: ${piiResult.detections.map((d) => d.type).join(", ")})`,
+        );
+        text = piiResult.text;
+      }
+      text = await resolveFeishuNamesInText({
+        text,
+        account,
+        runtime: params.runtime,
+      });
       if (mentionTargets?.length) {
         text = buildMentionedCardContent(mentionTargets, text);
       }
@@ -415,7 +463,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
             }
             if (info?.kind === "final") {
               streamText = mergeStreamingText(streamText, text);
-              await closeStreaming();
+              await closeStreaming(); // PII masking happens inside closeStreaming()
               deliveredFinalTexts.add(text);
             }
             // Send media even when streaming handled the text
@@ -425,11 +473,27 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
             return;
           }
 
+          // Security (V-05): mask any PII the agent may have included in its
+          // reply before it reaches the customer's Feishu chat. This is a
+          // last-line-of-defence guard that runs after all LLM + tool output
+          // has been assembled but before the message is sent over the wire.
+          const piiResult = guardOutboundPII(text);
+          if (piiResult.detections.length > 0) {
+            params.runtime.log?.(
+              `feishu[${account.accountId}] pii-guard: masked ${piiResult.detections.length} PII item(s) in reply (types: ${piiResult.detections.map((d) => d.type).join(", ")})`,
+            );
+          }
+          const safeText = await resolveFeishuNamesInText({
+            text: piiResult.text,
+            account,
+            runtime: params.runtime,
+          });
+
           if (useCard) {
             const cardHeader = resolveCardHeader(agentId, identity);
             const cardNote = resolveCardNote(agentId, identity, prefixContext.prefixContext);
             await sendChunkedTextReply({
-              text,
+              text: safeText,
               useCard: true,
               infoKind: info?.kind,
               sendChunk: async ({ chunk, isFirst }) => {
@@ -448,7 +512,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
             });
           } else {
             await sendChunkedTextReply({
-              text,
+              text: safeText,
               useCard: false,
               infoKind: info?.kind,
               sendChunk: async ({ chunk, isFirst }) => {
@@ -503,7 +567,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
             });
           }
         : undefined,
-      onReasoningStream: reasoningPreviewEnabled
+      onReasoningStream: streamingEnabled
         ? (payload: ReplyPayload) => {
             if (!payload.text) {
               return;
@@ -512,7 +576,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
             queueReasoningUpdate(payload.text);
           }
         : undefined,
-      onReasoningEnd: reasoningPreviewEnabled ? () => {} : undefined,
+      onReasoningEnd: streamingEnabled ? () => {} : undefined,
     },
     markDispatchIdle,
   };

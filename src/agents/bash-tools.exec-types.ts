@@ -29,6 +29,15 @@ export type ExecToolDefaults = {
   currentChannelId?: string;
   currentThreadTs?: string;
   accountId?: string;
+  /**
+   * Stable sender identity forwarded to child processes via
+   * `OPENCLAW_AGENT_CONTEXT`. Downstream tools (e.g. laicai `kingdee_api.py`)
+   * use this as a SOFT consistency check against `--caller`: it catches LLM
+   * hallucination and naive prompt injection, but not a shell-capable LLM
+   * that can read the env var and echo it back. See FM-020 in
+   * laicai/failure-modes.md for the honest threat model.
+   */
+  senderId?: string;
   notifyOnExit?: boolean;
   notifyOnExitEmptySuccess?: boolean;
   cwd?: string;

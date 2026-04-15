@@ -152,7 +152,7 @@ function describeFeishuMessageTool({
     enabledAccounts.length > 0 ||
     (!accountId &&
       cfg.channels?.feishu?.enabled !== false &&
-      Boolean(inspectFeishuCredentials(cfg.channels?.feishu as FeishuConfig | undefined)));
+      Boolean(inspectFeishuCredentials(cfg.channels?.feishu)));
   if (enabledAccounts.length === 0) {
     return {
       actions: [],
@@ -204,7 +204,7 @@ function setFeishuNamedAccountEnabled(
   accountId: string,
   enabled: boolean,
 ): ClawdbotConfig {
-  const feishuCfg = cfg.channels?.feishu as FeishuConfig | undefined;
+  const feishuCfg = cfg.channels?.feishu;
   return {
     ...cfg,
     channels: {
@@ -433,6 +433,49 @@ function jsonActionResult(details: Record<string, unknown>) {
   };
 }
 
+function toFeishuDirectoryEntry(peer: {
+  kind: "user";
+  id: string;
+  name?: string;
+  preferredSendTarget?: string;
+  stablePersonKey?: string;
+  userId?: string;
+  unionId?: string;
+  enterpriseEmail?: string;
+  mobile?: string;
+  departmentIds?: string[];
+}): {
+  kind: "user";
+  id: string;
+  name?: string;
+  raw: {
+    openId: string;
+    preferredSendTarget?: string;
+    stablePersonKey?: string;
+    userId?: string;
+    unionId?: string;
+    enterpriseEmail?: string;
+    mobile?: string;
+    departmentIds?: string[];
+  };
+} {
+  return {
+    kind: "user",
+    id: peer.preferredSendTarget ?? `user:${peer.id}`,
+    name: peer.name,
+    raw: {
+      openId: peer.id,
+      preferredSendTarget: peer.preferredSendTarget,
+      stablePersonKey: peer.stablePersonKey,
+      userId: peer.userId,
+      unionId: peer.unionId,
+      enterpriseEmail: peer.enterpriseEmail,
+      mobile: peer.mobile,
+      departmentIds: peer.departmentIds,
+    },
+  };
+}
+
 function readFirstString(
   params: Record<string, unknown>,
   keys: string[],
@@ -559,6 +602,9 @@ export const feishuPlugin: ChannelPlugin<ResolvedFeishuAccount, FeishuProbeResul
           "- Feishu targeting: omit `target` to reply to the current conversation (auto-inferred). Explicit targets: `user:open_id` or `chat:chat_id`.",
           "- Feishu supports interactive cards plus native image, file, audio, and video/media delivery.",
           "- Feishu supports `send`, `read`, `edit`, `thread-reply`, pins, and channel/member lookup, plus reactions when enabled.",
+          "- When a Feishu user ID such as `ou_xxx` appears, use `member-info` first to resolve the real person name before replying. Prefer `name`, and include the raw ID only as a secondary detail when needed.",
+          '- To find a Feishu person by name before sending, use `channel-list` with `scope: "user"` and `query`, then send to the resolved `user:<open_id>` target once the match is unique.',
+          "- When `channel-list` or `member-info` returns `preferred_send_target`, use that value for outbound contact. It prefers cross-app-stable IDs over app-specific `open_id` when available.",
         ],
       },
       groups: {
@@ -1113,16 +1159,43 @@ export const feishuPlugin: ChannelPlugin<ResolvedFeishuAccount, FeishuProbeResul
         targetResolver: {
           looksLikeId: looksLikeFeishuId,
           hint: "<chatId|user:openId|chat:chatId>",
+          resolveTarget: async ({ cfg, accountId, input }) => {
+            const query = input.trim();
+            if (!query || looksLikeFeishuId(query)) {
+              return null;
+            }
+            const peers = await (
+              await loadFeishuChannelRuntime()
+            ).listFeishuDirectoryPeersLive({
+              cfg,
+              query,
+              limit: 5,
+              fallbackToStatic: false,
+              accountId: accountId ?? undefined,
+            });
+            if (peers.length !== 1) {
+              return null;
+            }
+            const peer = peers[0];
+            return {
+              to: peer.preferredSendTarget ?? `user:${peer.userId ?? peer.id}`,
+              kind: "user",
+              display: peer.name,
+              source: "directory",
+            };
+          },
         },
       },
       directory: createChannelDirectoryAdapter({
         listPeers: async ({ cfg, query, limit, accountId }) =>
-          listFeishuDirectoryPeers({
-            cfg,
-            query: query ?? undefined,
-            limit: limit ?? undefined,
-            accountId: accountId ?? undefined,
-          }),
+          (
+            await listFeishuDirectoryPeers({
+              cfg,
+              query: query ?? undefined,
+              limit: limit ?? undefined,
+              accountId: accountId ?? undefined,
+            })
+          ).map((peer) => toFeishuDirectoryEntry(peer)),
         listGroups: async ({ cfg, query, limit, accountId }) =>
           listFeishuDirectoryGroups({
             cfg,
@@ -1135,12 +1208,14 @@ export const feishuPlugin: ChannelPlugin<ResolvedFeishuAccount, FeishuProbeResul
           listPeersLive:
             (runtime) =>
             async ({ cfg, query, limit, accountId }) =>
-              await runtime.listFeishuDirectoryPeersLive({
-                cfg,
-                query: query ?? undefined,
-                limit: limit ?? undefined,
-                accountId: accountId ?? undefined,
-              }),
+              (
+                await runtime.listFeishuDirectoryPeersLive({
+                  cfg,
+                  query: query ?? undefined,
+                  limit: limit ?? undefined,
+                  accountId: accountId ?? undefined,
+                })
+              ).map((peer) => toFeishuDirectoryEntry(peer)),
           listGroupsLive:
             (runtime) =>
             async ({ cfg, query, limit, accountId }) =>

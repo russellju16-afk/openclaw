@@ -2,11 +2,12 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { loadSessionStore } from "../../config/sessions/store.js";
 import {
-  createAcpVisibleTextAccumulator,
+  persistAcpTurnTranscript,
   resolveFallbackRetryPrompt,
   sessionFileHasContent,
-} from "./attempt-execution.helpers.js";
+} from "./attempt-execution.js";
 
 describe("resolveFallbackRetryPrompt", () => {
   const originalBody = "Summarize the quarterly earnings report and highlight key trends.";
@@ -162,46 +163,51 @@ describe("sessionFileHasContent", () => {
   });
 });
 
-describe("createAcpVisibleTextAccumulator", () => {
-  it("preserves cumulative raw snapshots after stripping a glued NO_REPLY prefix", () => {
-    const acc = createAcpVisibleTextAccumulator();
+describe("persistAcpTurnTranscript", () => {
+  let tmpDir: string;
+  let storePath: string;
 
-    expect(acc.consume("NO_REPLYThe user")).toEqual({
-      text: "The user",
-      delta: "The user",
-    });
-
-    expect(acc.consume("NO_REPLYThe user is saying")).toEqual({
-      text: "The user is saying",
-      delta: " is saying",
-    });
-
-    expect(acc.finalize()).toBe("The user is saying");
-    expect(acc.finalizeRaw()).toBe("The user is saying");
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "oc-acp-transcript-"));
+    storePath = path.join(tmpDir, "sessions.json");
+    const sessionFile = path.join(tmpDir, "sess-acp-1.jsonl");
+    await fs.writeFile(
+      storePath,
+      JSON.stringify({
+        "agent:main:test": {
+          sessionId: "sess-acp-1",
+          chatType: "direct",
+          channel: "feishu",
+          sessionFile,
+        },
+      }),
+      "utf-8",
+    );
   });
 
-  it("keeps append-only deltas working after stripping a glued NO_REPLY prefix", () => {
-    const acc = createAcpVisibleTextAccumulator();
-
-    expect(acc.consume("NO_REPLYThe user")).toEqual({
-      text: "The user",
-      delta: "The user",
-    });
-
-    expect(acc.consume(" is saying")).toEqual({
-      text: "The user is saying",
-      delta: " is saying",
-    });
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true });
   });
 
-  it("preserves punctuation-start text that begins with NO_REPLY-like content", () => {
-    const acc = createAcpVisibleTextAccumulator();
-
-    expect(acc.consume("NO_REPLY: explanation")).toEqual({
-      text: "NO_REPLY: explanation",
-      delta: "NO_REPLY: explanation",
+  it("writes sanitized assistant text to the ACP transcript", async () => {
+    const sessionStore = loadSessionStore(storePath, { skipCache: true });
+    const entry = await persistAcpTurnTranscript({
+      body: "hello",
+      finalText: "[[reply_to_current]] Hi there\n\nNO_REPLY",
+      sessionId: "sess-acp-1",
+      sessionKey: "agent:main:test",
+      sessionEntry: sessionStore["agent:main:test"],
+      sessionStore,
+      storePath,
+      sessionAgentId: "test-agent",
+      sessionCwd: tmpDir,
     });
 
-    expect(acc.finalize()).toBe("NO_REPLY: explanation");
+    expect(entry).toBeTruthy();
+    const sessionFile = path.join(tmpDir, "sess-acp-1.jsonl");
+    const lines = (await fs.readFile(sessionFile, "utf-8")).trim().split("\n");
+    const assistantLine = JSON.parse(lines.at(-1) as string);
+    expect(assistantLine.message.role).toBe("assistant");
+    expect(assistantLine.message.content[0].text).toBe("Hi there");
   });
 });

@@ -50,9 +50,9 @@ const timeoutMs = api.runtime.agent.resolveAgentTimeoutMs(cfg);
 // Ensure workspace exists
 await api.runtime.agent.ensureAgentWorkspace(cfg);
 
-// Run an embedded agent turn
+// Run an embedded Pi agent
 const agentDir = api.runtime.agent.resolveAgentDir(cfg);
-const result = await api.runtime.agent.runEmbeddedAgent({
+const result = await api.runtime.agent.runEmbeddedPiAgent({
   sessionId: "my-plugin:task-1",
   runId: crypto.randomUUID(),
   sessionFile: path.join(agentDir, "sessions", "my-plugin-task-1.jsonl"),
@@ -61,12 +61,6 @@ const result = await api.runtime.agent.runEmbeddedAgent({
   timeoutMs: api.runtime.agent.resolveAgentTimeoutMs(cfg),
 });
 ```
-
-`runEmbeddedAgent(...)` is the neutral helper for starting a normal OpenClaw
-agent turn from plugin code. It uses the same provider/model resolution and
-agent-harness selection as channel-triggered replies.
-
-`runEmbeddedPiAgent(...)` remains as a compatibility alias.
 
 **Session store helpers** are under `api.runtime.agent.session`:
 
@@ -160,22 +154,26 @@ user input.
 Text-to-speech synthesis.
 
 ```typescript
+// Read the live config snapshot each time you enter a runtime path so
+// writeConfigFile() updates take effect without restarting the plugin.
+const cfg = api.runtime.config.loadConfig();
+
 // Standard TTS
 const clip = await api.runtime.tts.textToSpeech({
   text: "Hello from OpenClaw",
-  cfg: api.config,
+  cfg,
 });
 
 // Telephony-optimized TTS
 const telephonyClip = await api.runtime.tts.textToSpeechTelephony({
   text: "Hello from OpenClaw",
-  cfg: api.config,
+  cfg,
 });
 
 // List available voices
 const voices = await api.runtime.tts.listVoices({
   provider: "elevenlabs",
-  cfg: api.config,
+  cfg,
 });
 ```
 
@@ -187,30 +185,32 @@ buffer + sample rate.
 Image, audio, and video analysis.
 
 ```typescript
+const cfg = api.runtime.config.loadConfig();
+
 // Describe an image
 const image = await api.runtime.mediaUnderstanding.describeImageFile({
   filePath: "/tmp/inbound-photo.jpg",
-  cfg: api.config,
+  cfg,
   agentDir: "/tmp/agent",
 });
 
 // Transcribe audio
 const { text } = await api.runtime.mediaUnderstanding.transcribeAudioFile({
   filePath: "/tmp/inbound-audio.ogg",
-  cfg: api.config,
+  cfg,
   mime: "audio/ogg", // optional, for when MIME cannot be inferred
 });
 
 // Describe a video
 const video = await api.runtime.mediaUnderstanding.describeVideoFile({
   filePath: "/tmp/inbound-video.mp4",
-  cfg: api.config,
+  cfg,
 });
 
 // Generic file analysis
 const result = await api.runtime.mediaUnderstanding.runFile({
   filePath: "/tmp/inbound-file.pdf",
-  cfg: api.config,
+  cfg,
 });
 ```
 
@@ -226,12 +226,14 @@ Returns `{ text: undefined }` when no output is produced (e.g. skipped input).
 Image generation.
 
 ```typescript
+const cfg = api.runtime.config.loadConfig();
+
 const result = await api.runtime.imageGeneration.generate({
   prompt: "A robot painting a sunset",
-  cfg: api.config,
+  cfg,
 });
 
-const providers = api.runtime.imageGeneration.listProviders({ cfg: api.config });
+const providers = api.runtime.imageGeneration.listProviders({ cfg });
 ```
 
 ### `api.runtime.webSearch`
@@ -239,10 +241,12 @@ const providers = api.runtime.imageGeneration.listProviders({ cfg: api.config })
 Web search.
 
 ```typescript
-const providers = api.runtime.webSearch.listProviders({ config: api.config });
+const config = api.runtime.config.loadConfig();
+
+const providers = api.runtime.webSearch.listProviders({ config });
 
 const result = await api.runtime.webSearch.search({
-  config: api.config,
+  config,
   args: { query: "OpenClaw plugin SDK", count: 5 },
 });
 ```
@@ -265,9 +269,17 @@ const resized = await api.runtime.media.resizeToJpeg(buffer, { maxWidth: 800 });
 Config load and write.
 
 ```typescript
-const cfg = await api.runtime.config.loadConfig();
+const cfg = api.runtime.config.loadConfig();
 await api.runtime.config.writeConfigFile(cfg);
 ```
+
+<Warning>
+  Always call `api.runtime.config.loadConfig()` at the start of tool, hook, or
+  command handlers to read the live config. `api.config` is captured at plugin
+  register time and becomes stale after any `writeConfigFile(...)` call,
+  because core replaces the global config reference rather than mutating it in
+  place. Register-time decisions may still use `api.config`.
+</Warning>
 
 ### `api.runtime.system`
 
@@ -336,46 +348,6 @@ api.runtime.tools.registerMemoryCli(/* ... */);
 
 Channel-specific runtime helpers (available when a channel plugin is loaded).
 
-`api.runtime.channel.mentions` is the shared inbound mention-policy surface for
-bundled channel plugins that use runtime injection:
-
-```typescript
-const mentionMatch = api.runtime.channel.mentions.matchesMentionWithExplicit(text, {
-  mentionRegexes,
-  mentionPatterns,
-});
-
-const decision = api.runtime.channel.mentions.resolveInboundMentionDecision({
-  facts: {
-    canDetectMention: true,
-    wasMentioned: mentionMatch.matched,
-    implicitMentionKinds: api.runtime.channel.mentions.implicitMentionKindWhen(
-      "reply_to_bot",
-      isReplyToBot,
-    ),
-  },
-  policy: {
-    isGroup,
-    requireMention,
-    allowTextCommands,
-    hasControlCommand,
-    commandAuthorized,
-  },
-});
-```
-
-Available mention helpers:
-
-- `buildMentionRegexes`
-- `matchesMentionPatterns`
-- `matchesMentionWithExplicit`
-- `implicitMentionKindWhen`
-- `resolveInboundMentionDecision`
-
-`api.runtime.channel.mentions` intentionally does not expose the older
-`resolveMentionGating*` compatibility helpers. Prefer the normalized
-`{ facts, policy }` path.
-
 ## Storing runtime references
 
 Use `createPluginRuntimeStore` to store the runtime reference for use outside
@@ -410,15 +382,15 @@ export function tryGetRuntime() {
 
 Beyond `api.runtime`, the API object also provides:
 
-| Field                    | Type                      | Description                                                                                 |
-| ------------------------ | ------------------------- | ------------------------------------------------------------------------------------------- |
-| `api.id`                 | `string`                  | Plugin id                                                                                   |
-| `api.name`               | `string`                  | Plugin display name                                                                         |
-| `api.config`             | `OpenClawConfig`          | Current config snapshot (active in-memory runtime snapshot when available)                  |
-| `api.pluginConfig`       | `Record<string, unknown>` | Plugin-specific config from `plugins.entries.<id>.config`                                   |
-| `api.logger`             | `PluginLogger`            | Scoped logger (`debug`, `info`, `warn`, `error`)                                            |
-| `api.registrationMode`   | `PluginRegistrationMode`  | Current load mode; `"setup-runtime"` is the lightweight pre-full-entry startup/setup window |
-| `api.resolvePath(input)` | `(string) => string`      | Resolve a path relative to the plugin root                                                  |
+| Field                    | Type                      | Description                                                                                                                                                              |
+| ------------------------ | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `api.id`                 | `string`                  | Plugin id                                                                                                                                                                |
+| `api.name`               | `string`                  | Plugin display name                                                                                                                                                      |
+| `api.config`             | `OpenClawConfig`          | Register-time config snapshot. Deprecated for runtime paths -- use `api.runtime.config.loadConfig()` in handlers so `writeConfigFile` edits take effect without restart. |
+| `api.pluginConfig`       | `Record<string, unknown>` | Plugin-specific config from `plugins.entries.<id>.config`                                                                                                                |
+| `api.logger`             | `PluginLogger`            | Scoped logger (`debug`, `info`, `warn`, `error`)                                                                                                                         |
+| `api.registrationMode`   | `PluginRegistrationMode`  | `"full"`, `"setup-only"`, `"setup-runtime"`, or `"cli-metadata"`                                                                                                         |
+| `api.resolvePath(input)` | `(string) => string`      | Resolve a path relative to the plugin root                                                                                                                               |
 
 ## Related
 

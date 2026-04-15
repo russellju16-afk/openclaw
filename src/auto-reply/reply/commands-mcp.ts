@@ -1,4 +1,10 @@
 import {
+  formatConfiguredMcpServerDetailLines,
+  formatConfiguredMcpServerListLine,
+  inspectConfiguredMcpServer,
+  inspectConfiguredMcpServers,
+} from "../../agents/mcp-print.js";
+import {
   listConfiguredMcpServers,
   setConfiguredMcpServer,
   unsetConfiguredMcpServer,
@@ -15,6 +21,16 @@ import { parseMcpCommand } from "./mcp-commands.js";
 
 function renderJsonBlock(label: string, value: unknown): string {
   return `${label}\n\`\`\`json\n${JSON.stringify(value, null, 2)}\n\`\`\``;
+}
+
+function renderDetailBlock(label: string, lines: string[], value: unknown): string {
+  const detail = lines
+    .map((line) => line.replaceAll("`", "\\`"))
+    .map((line) => {
+      const [prefix, rest] = line.split(": ", 2);
+      return rest ? `${prefix}: \`${rest}\`` : line;
+    });
+  return `${label}\n${detail.join("\n")}\n\n\`\`\`json\n${JSON.stringify(value, null, 2)}\n\`\`\``;
 }
 
 export const handleMcpCommand: CommandHandler = async (params, allowTextCommands) => {
@@ -68,7 +84,13 @@ export const handleMcpCommand: CommandHandler = async (params, allowTextCommands
       return {
         shouldContinue: false,
         reply: {
-          text: renderJsonBlock(`🔌 MCP server "${mcpCommand.name}" (${loaded.path})`, server),
+          text: renderDetailBlock(
+            `🔌 MCP server "${mcpCommand.name}" (${loaded.path})`,
+            formatConfiguredMcpServerDetailLines(
+              inspectConfiguredMcpServer(mcpCommand.name, server),
+            ),
+            server,
+          ),
         },
       };
     }
@@ -81,7 +103,11 @@ export const handleMcpCommand: CommandHandler = async (params, allowTextCommands
     return {
       shouldContinue: false,
       reply: {
-        text: renderJsonBlock(`🔌 MCP servers (${loaded.path})`, loaded.mcpServers),
+        text: renderDetailBlock(
+          `🔌 MCP servers (${loaded.path})`,
+          inspectConfiguredMcpServers(loaded.mcpServers).map(formatConfiguredMcpServerListLine),
+          loaded.mcpServers,
+        ),
       },
     };
   }

@@ -68,6 +68,24 @@ describe("parseFeishuMessageEvent – mentionedBot", () => {
     expect(ctx.senderId).toBe("u_mobile_only");
   });
 
+  it("extracts stable sender identity and aliases when union_id is available", () => {
+    const event = makeEvent("p2p", []);
+    event.sender.sender_id = {
+      open_id: "ou_sender_alias",
+      user_id: "u_sender_canonical",
+      union_id: "on_sender_stable",
+    };
+
+    const ctx = parseFeishuMessageEvent(event, BOT_OPEN_ID) as Record<string, unknown>;
+    expect(ctx["senderStableId"]).toBe("on_sender_stable");
+    expect(ctx["senderPreferredTarget"]).toBe("user:u_sender_canonical");
+    expect(ctx["senderAltIds"]).toEqual([
+      "ou_sender_alias",
+      "u_sender_canonical",
+      "on_sender_stable",
+    ]);
+  });
+
   it("returns mentionedBot=true when bot is mentioned", () => {
     const event = makeEvent("group", [
       { key: "@_user_1", name: "Bot", id: { open_id: BOT_OPEN_ID } },

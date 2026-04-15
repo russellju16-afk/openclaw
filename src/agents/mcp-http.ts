@@ -69,5 +69,5 @@ export function resolveHttpMcpServerLaunchConfig(
 }
 
 export function describeHttpMcpServerLaunchConfig(config: HttpMcpServerLaunchConfig): string {
-  return redactSensitiveUrl(config.url);
+  return `${config.transportType} ${redactSensitiveUrl(config.url)}`;
 }

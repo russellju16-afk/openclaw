@@ -81,6 +81,33 @@ type SavedMedia = {
   path?: string;
 };
 
+async function saveAttachmentAsOffloadedRef(params: {
+  base64: string;
+  label: string;
+  mimeType: string;
+  maxBytes: number;
+}): Promise<OffloadedRef> {
+  const estimatedBytes = estimateBase64DecodedBytes(params.base64);
+  const buffer = Buffer.from(params.base64, "base64");
+  verifyDecodedSize(buffer, estimatedBytes, params.label);
+  const labelWithExt = ensureExtension(params.label, params.mimeType);
+  const rawResult = await saveMediaBuffer(
+    buffer,
+    params.mimeType,
+    "inbound",
+    params.maxBytes,
+    labelWithExt,
+  );
+  const savedMedia = assertSavedMedia(rawResult, params.label);
+  return {
+    mediaRef: `media://inbound/${savedMedia.id}`,
+    id: savedMedia.id,
+    path: savedMedia.path ?? "",
+    mimeType: params.mimeType,
+    label: params.label,
+  };
+}
+
 const OFFLOAD_THRESHOLD_BYTES = 2_000_000;
 
 const MIME_TO_EXT: Record<string, string> = {
@@ -304,16 +331,75 @@ export async function parseMessageWithAttachments(
     return { message, images: [], imageOrder: [], offloadedRefs: [] };
   }
 
-  // For text-only models drop all attachments cleanly. Do not save files or
-  // inject media:// markers that would never be resolved and would leak
-  // internal path references into the model's prompt.
+  // For text-only models, preserve image attachments as media:// markers so
+  // the agent can still invoke the image tool on demand. Do not pass inline
+  // image blocks to the main model in this mode.
   if (opts?.supportsImages === false) {
-    if (attachments.length > 0) {
-      log?.warn(
-        `parseMessageWithAttachments: ${attachments.length} attachment(s) dropped — model does not support images`,
-      );
+    let updatedMessage = message;
+    const offloadedRefs: OffloadedRef[] = [];
+    const savedMediaIds: string[] = [];
+    try {
+      for (const [idx, att] of attachments.entries()) {
+        if (!att) {
+          continue;
+        }
+        const normalized = normalizeAttachment(att, idx, {
+          stripDataUrlPrefix: true,
+          requireImageMime: false,
+        });
+        const { base64: b64, label, mime } = normalized;
+        if (!isValidBase64(b64)) {
+          throw new Error(`attachment ${label}: invalid base64 content`);
+        }
+        const sizeBytes = estimateBase64DecodedBytes(b64);
+        if (sizeBytes <= 0) {
+          log?.warn(`attachment ${label}: estimated size is zero, dropping`);
+          continue;
+        }
+        if (sizeBytes > maxBytes) {
+          throw new Error(
+            `attachment ${label}: exceeds size limit (${sizeBytes} > ${maxBytes} bytes)`,
+          );
+        }
+
+        const providedMime = normalizeMime(mime);
+        const sniffedMime = normalizeMime(await sniffMimeFromBase64(b64));
+        if (sniffedMime && !isImageMime(sniffedMime)) {
+          log?.warn(`attachment ${label}: detected non-image (${sniffedMime}), dropping`);
+          continue;
+        }
+        if (!sniffedMime && !isImageMime(providedMime)) {
+          log?.warn(`attachment ${label}: unable to detect image mime type, dropping`);
+          continue;
+        }
+        if (sniffedMime && providedMime && sniffedMime !== providedMime) {
+          log?.warn(
+            `attachment ${label}: mime mismatch (${providedMime} -> ${sniffedMime}), using sniffed`,
+          );
+        }
+        const finalMime = sniffedMime ?? providedMime ?? normalizeMime(mime) ?? mime;
+        const ref = await saveAttachmentAsOffloadedRef({
+          base64: b64,
+          label,
+          mimeType: finalMime,
+          maxBytes,
+        });
+        savedMediaIds.push(ref.id);
+        updatedMessage += `\n[media attached: ${ref.mediaRef}]`;
+        offloadedRefs.push(ref);
+      }
+      return {
+        message: updatedMessage !== message ? updatedMessage.trimEnd() : message,
+        images: [],
+        imageOrder: new Array(offloadedRefs.length).fill("offloaded"),
+        offloadedRefs,
+      };
+    } catch (err) {
+      if (savedMediaIds.length > 0) {
+        await Promise.allSettled(savedMediaIds.map((id) => deleteMediaBuffer(id, "inbound")));
+      }
+      throw err;
     }
-    return { message, images: [], imageOrder: [], offloadedRefs: [] };
   }
 
   const images: ChatImageContent[] = [];
@@ -398,37 +484,22 @@ export async function parseMessageWithAttachments(
         // Only the storage operation is wrapped so callers can distinguish
         // infrastructure failures (5xx) from input errors (4xx).
         try {
-          const labelWithExt = ensureExtension(label, finalMime);
-
-          const rawResult = await saveMediaBuffer(
-            buffer,
-            finalMime,
-            "inbound",
+          const ref = await saveAttachmentAsOffloadedRef({
+            base64: b64,
+            label,
+            mimeType: finalMime,
             maxBytes,
-            labelWithExt,
-          );
-
-          const savedMedia = assertSavedMedia(rawResult, label);
+          });
 
           // Track for cleanup if a subsequent attachment fails.
-          savedMediaIds.push(savedMedia.id);
+          savedMediaIds.push(ref.id);
 
-          // Opaque URI — compatible with workspaceOnly sandboxes and decouples
-          // the Gateway from the agent's filesystem layout.
-          const mediaRef = `media://inbound/${savedMedia.id}`;
-
-          updatedMessage += `\n[media attached: ${mediaRef}]`;
-          log?.info?.(`[Gateway] Intercepted large image payload. Saved: ${mediaRef}`);
+          updatedMessage += `\n[media attached: ${ref.mediaRef}]`;
+          log?.info?.(`[Gateway] Intercepted large image payload. Saved: ${ref.mediaRef}`);
 
           // Record for transcript metadata — separate from `images` because
           // these are not passed inline to the model.
-          offloadedRefs.push({
-            mediaRef,
-            id: savedMedia.id,
-            path: savedMedia.path ?? "",
-            mimeType: finalMime,
-            label,
-          });
+          offloadedRefs.push(ref);
           imageOrder.push("offloaded");
 
           isOffloaded = true;

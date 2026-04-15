@@ -136,6 +136,12 @@ export type MsgContext = {
   OwnerAllowFrom?: Array<string | number>;
   SenderName?: string;
   SenderId?: string;
+  /** Stable sender identity when the channel can resolve one (for example Feishu union_id). */
+  SenderStableId?: string;
+  /** Alternate trusted sender ids for the same person (for example open_id/user_id/union_id). */
+  SenderAltIds?: string[];
+  /** Preferred trusted outbound target for the sender when the channel exposes one. */
+  SenderPreferredTarget?: string;
   SenderUsername?: string;
   SenderTag?: string;
   SenderE164?: string;

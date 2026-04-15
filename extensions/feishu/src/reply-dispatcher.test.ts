@@ -19,34 +19,8 @@ const resolveReceiveIdTypeMock = vi.hoisted(() => vi.fn());
 const createReplyDispatcherWithTypingMock = vi.hoisted(() => vi.fn());
 const addTypingIndicatorMock = vi.hoisted(() => vi.fn(async () => ({ messageId: "om_msg" })));
 const removeTypingIndicatorMock = vi.hoisted(() => vi.fn(async () => {}));
+const resolveFeishuSenderNameMock = vi.hoisted(() => vi.fn());
 const streamingInstances = vi.hoisted((): StreamingSessionStub[] => []);
-
-function mergeStreamingText(
-  previousText: string | undefined,
-  nextText: string | undefined,
-): string {
-  const previous = typeof previousText === "string" ? previousText : "";
-  const next = typeof nextText === "string" ? nextText : "";
-  if (!next) {
-    return previous;
-  }
-  if (!previous || next === previous) {
-    return next;
-  }
-  if (next.startsWith(previous) || next.includes(previous)) {
-    return next;
-  }
-  if (previous.startsWith(next) || previous.includes(next)) {
-    return previous;
-  }
-  const maxOverlap = Math.min(previous.length, next.length);
-  for (let overlap = maxOverlap; overlap > 0; overlap -= 1) {
-    if (previous.slice(-overlap) === next.slice(0, overlap)) {
-      return `${previous}${next.slice(overlap)}`;
-    }
-  }
-  return `${previous}${next}`;
-}
 
 vi.mock("./accounts.js", () => ({
   resolveFeishuAccount: resolveFeishuAccountMock,
@@ -60,14 +34,20 @@ vi.mock("./send.js", () => ({
 }));
 vi.mock("./media.js", () => ({ sendMediaFeishu: sendMediaFeishuMock }));
 vi.mock("./client.js", () => ({ createFeishuClient: createFeishuClientMock }));
-vi.mock("./targets.js", () => ({ resolveReceiveIdType: resolveReceiveIdTypeMock }));
+vi.mock("./targets.js", () => ({
+  resolveReceiveIdType: resolveReceiveIdTypeMock,
+}));
 vi.mock("./typing.js", () => ({
   addTypingIndicator: addTypingIndicatorMock,
   removeTypingIndicator: removeTypingIndicatorMock,
 }));
-vi.mock("./streaming-card.js", () => {
+vi.mock("./bot-sender-name.js", () => ({
+  resolveFeishuSenderName: resolveFeishuSenderNameMock,
+}));
+vi.mock("./streaming-card.js", async () => {
+  const actual = await vi.importActual<typeof import("./streaming-card.js")>("./streaming-card.js");
   return {
-    mergeStreamingText,
+    mergeStreamingText: actual.mergeStreamingText,
     FeishuStreamingSession: class {
       active = false;
       start = vi.fn(async () => {
@@ -110,6 +90,7 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
 
     resolveReceiveIdTypeMock.mockReturnValue("chat_id");
     createFeishuClientMock.mockReturnValue({});
+    resolveFeishuSenderNameMock.mockResolvedValue({});
 
     createReplyDispatcherWithTypingMock.mockImplementation((opts) => ({
       dispatcher: {},
@@ -418,7 +399,7 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
       runtime: createRuntimeLogger(),
     });
     await options.onReplyStart?.();
-    result.replyOptions.onPartialReply?.({ text: "hello" });
+    await result.replyOptions.onPartialReply?.({ text: "hello" });
     await options.deliver({ text: "lo world" }, { kind: "block" });
     await options.onIdle?.();
 
@@ -465,7 +446,10 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
       runtime: createRuntimeLogger(),
     });
     await options.deliver(
-      { text: "```ts\nconst x = 1\n```", mediaUrls: ["https://example.com/a.png"] },
+      {
+        text: "```ts\nconst x = 1\n```",
+        mediaUrls: ["https://example.com/a.png"],
+      },
       { kind: "final" },
     );
 
@@ -524,12 +508,13 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
   it("streams reasoning content as blockquote before answer", async () => {
     const { result, options } = createDispatcherHarness({
       runtime: createRuntimeLogger(),
-      allowReasoningPreview: true,
     });
 
     await options.onReplyStart?.();
     // Core agent sends pre-formatted text from formatReasoningMessage
-    result.replyOptions.onReasoningStream?.({ text: "Reasoning:\n_thinking step 1_" });
+    result.replyOptions.onReasoningStream?.({
+      text: "Reasoning:\n_thinking step 1_",
+    });
     result.replyOptions.onReasoningStream?.({
       text: "Reasoning:\n_thinking step 1_\n_step 2_",
     });
@@ -539,7 +524,7 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
 
     expect(streamingInstances).toHaveLength(1);
     const updateCalls = streamingInstances[0].update.mock.calls.map((c: unknown[]) =>
-      typeof c[0] === "string" ? c[0] : "",
+      String(c[0] ?? ""),
     );
     const reasoningUpdate = updateCalls.find((c) => c.includes("Thinking"));
     expect(reasoningUpdate).toContain("> 💭 **Thinking**");
@@ -558,23 +543,13 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
     expect(closeArg).toContain("answer part final");
   });
 
-  it("provides onReasoningStream and onReasoningEnd when reasoning previews are allowed", () => {
+  it("provides onReasoningStream and onReasoningEnd when streaming is enabled", () => {
     const { result } = createDispatcherHarness({
       runtime: createRuntimeLogger(),
-      allowReasoningPreview: true,
     });
 
     expect(result.replyOptions.onReasoningStream).toBeTypeOf("function");
     expect(result.replyOptions.onReasoningEnd).toBeTypeOf("function");
-  });
-
-  it("omits reasoning callbacks unless reasoning previews are allowed", () => {
-    const { result } = createDispatcherHarness({
-      runtime: createRuntimeLogger(),
-    });
-
-    expect(result.replyOptions.onReasoningStream).toBeUndefined();
-    expect(result.replyOptions.onReasoningEnd).toBeUndefined();
   });
 
   it("omits reasoning callbacks when streaming is disabled", () => {
@@ -600,11 +575,12 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
   it("renders reasoning-only card when no answer text arrives", async () => {
     const { result, options } = createDispatcherHarness({
       runtime: createRuntimeLogger(),
-      allowReasoningPreview: true,
     });
 
     await options.onReplyStart?.();
-    result.replyOptions.onReasoningStream?.({ text: "Reasoning:\n_deep thought_" });
+    result.replyOptions.onReasoningStream?.({
+      text: "Reasoning:\n_deep thought_",
+    });
     result.replyOptions.onReasoningEnd?.();
     await options.onIdle?.();
 
@@ -620,7 +596,6 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
   it("ignores empty reasoning payloads", async () => {
     const { result, options } = createDispatcherHarness({
       runtime: createRuntimeLogger(),
-      allowReasoningPreview: true,
     });
 
     await options.onReplyStart?.();
@@ -637,7 +612,6 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
   it("deduplicates final text by raw answer payload, not combined card text", async () => {
     const { result, options } = createDispatcherHarness({
       runtime: createRuntimeLogger(),
-      allowReasoningPreview: true,
     });
 
     await options.onReplyStart?.();
@@ -754,5 +728,96 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
     } finally {
       streamingInstances.push = origPush;
     }
+  });
+
+  describe("PII guard (V-05)", () => {
+    it("masks a Chinese phone number in plain text reply before sending", async () => {
+      const logMock = vi.fn();
+      const { options } = createDispatcherHarness({
+        runtime: { log: logMock, error: vi.fn() } as never,
+      });
+      await options.deliver({ text: "您的联系方式是 13812345678，请确认" }, { kind: "final" });
+
+      expect(sendMessageFeishuMock).toHaveBeenCalledTimes(1);
+      const sentText: string = sendMessageFeishuMock.mock.calls[0][0].text;
+      expect(sentText).not.toContain("13812345678");
+      expect(sentText).toContain("138****5678");
+      expect(logMock).toHaveBeenCalledWith(expect.stringContaining("pii-guard"));
+    });
+
+    it("masks phone number in card reply before sending", async () => {
+      resolveFeishuAccountMock.mockReturnValue({
+        accountId: "main",
+        appId: "app_id",
+        appSecret: "app_secret",
+        domain: "feishu",
+        config: { renderMode: "card", streaming: false },
+      });
+      sendStructuredCardFeishuMock.mockResolvedValue(undefined);
+
+      const { options } = createDispatcherHarness();
+      await options.deliver({ text: "账户余额，卡号 6228480012345678，请核对" }, { kind: "final" });
+
+      expect(sendStructuredCardFeishuMock).toHaveBeenCalledTimes(1);
+      const sentText: string = sendStructuredCardFeishuMock.mock.calls[0][0].text;
+      expect(sentText).not.toContain("6228480012345678");
+      expect(sentText).toContain("6228****5678");
+    });
+
+    it("does not modify reply text when no PII is present", async () => {
+      const { options } = createDispatcherHarness();
+      await options.deliver({ text: "您好，请问有什么可以帮您？" }, { kind: "final" });
+
+      expect(sendMessageFeishuMock).toHaveBeenCalledTimes(1);
+      const sentText: string = sendMessageFeishuMock.mock.calls[0][0].text;
+      expect(sentText).toBe("您好，请问有什么可以帮您？");
+    });
+
+    it("masks phone number in streaming reply at close", async () => {
+      const logMock = vi.fn();
+      const { options } = createDispatcherHarness({
+        runtime: { log: logMock, error: vi.fn() } as never,
+        rootId: "om_root",
+      });
+
+      // Deliver a streaming-eligible markdown payload containing a phone number
+      await options.deliver({ text: "```\n联系电话 13987654321\n```" }, { kind: "final" });
+
+      expect(streamingInstances).toHaveLength(1);
+      expect(streamingInstances[0].close).toHaveBeenCalledTimes(1);
+      const closedText: string = streamingInstances[0].close.mock.calls[0][0];
+      expect(closedText).not.toContain("13987654321");
+      expect(closedText).toContain("139****4321");
+      expect(logMock).toHaveBeenCalledWith(expect.stringContaining("pii-guard"));
+    });
+  });
+
+  it("resolves visible Feishu open_ids to names before sending plain text replies", async () => {
+    resolveFeishuSenderNameMock.mockImplementation(async ({ senderId }: { senderId: string }) => {
+      if (senderId === "ou_6cd1c8e08d2da200868f5709061139a1") {
+        return { name: "李元甲" };
+      }
+      if (senderId === "ou_6e09ba9eec246894cdceea3a8abf39d7") {
+        return { name: "李航航" };
+      }
+      return {};
+    });
+
+    const { options } = createDispatcherHarness({
+      runtime: createRuntimeLogger(),
+    });
+    await options.deliver(
+      {
+        text: "1. ou_6cd1c8e08d2da200868f5709061139a1\n2. ou_6e09ba9eec246894cdceea3a8abf39d7",
+      },
+      { kind: "final" },
+    );
+
+    expect(sendMessageFeishuMock).toHaveBeenCalledTimes(1);
+    expect(sendMessageFeishuMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "1. 李元甲\n2. 李航航",
+      }),
+    );
   });
 });
