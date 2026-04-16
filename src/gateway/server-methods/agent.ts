@@ -420,13 +420,14 @@ export const agentHandlers: GatewayRequestHandlers = {
           undefined,
           errorShape(
             ErrorCodes.INVALID_REQUEST,
-            `invalid agent params: unknown channel: ${normalized}`,
+            `invalid agent params: unknown channel: ${String(normalized)}`,
           ),
         );
         return;
       }
     }
 
+    const agentIdRaw = requestedAgentIdRaw;
     const agentId = requestedAgentId;
     if (agentId) {
       const knownAgents = listAgentIds(cfg);

@@ -11,6 +11,7 @@ import {
 import { resolveStorePath } from "../config/sessions/paths.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import {
+  resolveCronDeliveryBestEffort,
   resolveCronDeliveryPlan,
   resolveFailureDestination,
   sendFailureNotificationAnnounce,
@@ -461,7 +462,7 @@ export function buildGatewayCronService(params: {
         }
 
         if (evt.status === "error" && job) {
-          const isBestEffort = job.delivery?.bestEffort === true;
+          const isBestEffort = resolveCronDeliveryBestEffort(job);
           if (!isBestEffort) {
             const failureMessage = `Cron job "${job.name}" failed: ${evt.error ?? "unknown error"}`;
             const failureDest = resolveFailureDestination(job, params.cfg.cron?.failureDestination);

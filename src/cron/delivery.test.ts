@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { resolveCronDeliveryPlan, resolveFailureDestination } from "./delivery-plan.js";
+import {
+  resolveCronDeliveryBestEffort,
+  resolveCronDeliveryPlan,
+  resolveFailureDestination,
+} from "./delivery-plan.js";
 import type { CronJob } from "./types.js";
 
 function makeJob(overrides: Partial<CronJob>): CronJob {
@@ -235,5 +239,47 @@ describe("resolveFailureDestination", () => {
       to: undefined,
       accountId: undefined,
     });
+  });
+});
+
+describe("resolveCronDeliveryBestEffort", () => {
+  it("defaults group chat announce delivery to best-effort", () => {
+    const result = resolveCronDeliveryBestEffort(
+      makeJob({
+        delivery: {
+          mode: "announce",
+          channel: "feishu",
+          to: "chat:oc_group_123",
+        },
+      }),
+    );
+    expect(result).toBe(true);
+  });
+
+  it("defaults group session announce delivery to best-effort", () => {
+    const result = resolveCronDeliveryBestEffort(
+      makeJob({
+        sessionKey: "agent:main:feishu:group:oc_group_123",
+        delivery: {
+          mode: "announce",
+          channel: "last",
+        },
+      }),
+    );
+    expect(result).toBe(true);
+  });
+
+  it("honors explicit bestEffort=false for group delivery", () => {
+    const result = resolveCronDeliveryBestEffort(
+      makeJob({
+        delivery: {
+          mode: "announce",
+          channel: "feishu",
+          to: "chat:oc_group_123",
+          bestEffort: false,
+        },
+      }),
+    );
+    expect(result).toBe(false);
   });
 });

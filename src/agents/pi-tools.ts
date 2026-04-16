@@ -447,14 +447,18 @@ export function createOpenClawCodingTools(options?: {
       if (sandboxRoot) {
         return [];
       }
-      const wrapped = createHostWorkspaceWriteTool(workspaceRoot, { workspaceOnly });
+      const wrapped = createHostWorkspaceWriteTool(workspaceRoot, {
+        workspaceOnly,
+      });
       return [workspaceOnly ? wrapToolWorkspaceRootGuard(wrapped, workspaceRoot) : wrapped];
     }
     if (tool.name === "edit") {
       if (sandboxRoot) {
         return [];
       }
-      const wrapped = createHostWorkspaceEditTool(workspaceRoot, { workspaceOnly });
+      const wrapped = createHostWorkspaceEditTool(workspaceRoot, {
+        workspaceOnly,
+      });
       return [workspaceOnly ? wrapToolWorkspaceRootGuard(wrapped, workspaceRoot) : wrapped];
     }
     return [tool];
@@ -481,6 +485,7 @@ export function createOpenClawCodingTools(options?: {
     currentChannelId: options?.currentChannelId,
     currentThreadTs: options?.currentThreadTs,
     accountId: options?.agentAccountId,
+    senderId: options?.senderId ?? undefined,
     backgroundMs: options?.exec?.backgroundMs ?? execConfig.backgroundMs,
     timeoutSec: options?.exec?.timeoutSec ?? execConfig.timeoutSec,
     approvalRunningNoticeMs:
@@ -521,22 +526,34 @@ export function createOpenClawCodingTools(options?: {
         ? [
             workspaceOnly
               ? wrapToolWorkspaceRootGuardWithOptions(
-                  createSandboxedEditTool({ root: sandboxRoot, bridge: sandboxFsBridge! }),
+                  createSandboxedEditTool({
+                    root: sandboxRoot,
+                    bridge: sandboxFsBridge!,
+                  }),
                   sandboxRoot,
                   {
                     containerWorkdir: sandbox.containerWorkdir,
                   },
                 )
-              : createSandboxedEditTool({ root: sandboxRoot, bridge: sandboxFsBridge! }),
+              : createSandboxedEditTool({
+                  root: sandboxRoot,
+                  bridge: sandboxFsBridge!,
+                }),
             workspaceOnly
               ? wrapToolWorkspaceRootGuardWithOptions(
-                  createSandboxedWriteTool({ root: sandboxRoot, bridge: sandboxFsBridge! }),
+                  createSandboxedWriteTool({
+                    root: sandboxRoot,
+                    bridge: sandboxFsBridge!,
+                  }),
                   sandboxRoot,
                   {
                     containerWorkdir: sandbox.containerWorkdir,
                   },
                 )
-              : createSandboxedWriteTool({ root: sandboxRoot, bridge: sandboxFsBridge! }),
+              : createSandboxedWriteTool({
+                  root: sandboxRoot,
+                  bridge: sandboxFsBridge!,
+                }),
           ]
         : []
       : []),
@@ -594,7 +611,7 @@ export function createOpenClawCodingTools(options?: {
       sessionId: options?.sessionId,
       onYield: options?.onYield,
       allowGatewaySubagentBinding: options?.allowGatewaySubagentBinding,
-    } as unknown as Parameters<typeof createOpenClawTools>[0]),
+    }),
   ];
   const toolsForMemoryFlush =
     isMemoryFlushRun && memoryFlushWritePath
@@ -672,7 +689,10 @@ export function createOpenClawCodingTools(options?: {
       sessionKey: options?.sessionKey,
       sessionId: options?.sessionId,
       runId: options?.runId,
-      loopDetection: resolveToolLoopDetectionConfig({ cfg: options?.config, agentId }),
+      loopDetection: resolveToolLoopDetectionConfig({
+        cfg: options?.config,
+        agentId,
+      }),
     }),
   );
   const withAbort = options?.abortSignal

@@ -87,4 +87,27 @@ describe("resolveCronDeliveryBestEffort", () => {
     const job = { delivery: { bestEffort: true }, payload: { kind: "agentTurn" } } as never;
     expect(resolveCronDeliveryBestEffort(job)).toBe(true);
   });
+
+  it("defaults chat targets to best-effort", async () => {
+    const { resolveCronDeliveryBestEffort } = await import("./delivery-dispatch.js");
+    const job = {
+      delivery: { mode: "announce", channel: "feishu", to: "chat:oc_group_123" },
+      payload: { kind: "agentTurn" },
+    } as never;
+    expect(resolveCronDeliveryBestEffort(job)).toBe(true);
+  });
+
+  it("lets explicit false override the group default", async () => {
+    const { resolveCronDeliveryBestEffort } = await import("./delivery-dispatch.js");
+    const job = {
+      delivery: {
+        mode: "announce",
+        channel: "feishu",
+        to: "chat:oc_group_123",
+        bestEffort: false,
+      },
+      payload: { kind: "agentTurn" },
+    } as never;
+    expect(resolveCronDeliveryBestEffort(job)).toBe(false);
+  });
 });

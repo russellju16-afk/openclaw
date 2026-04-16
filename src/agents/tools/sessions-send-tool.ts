@@ -355,7 +355,7 @@ export function createSessionsSendTool(opts?: {
       let waitStatus: string | undefined;
       let waitError: string | undefined;
       try {
-        const wait = await gatewayCall({
+        const wait = await gatewayCall<{ status?: string; error?: string }>({
           method: "agent.wait",
           params: {
             runId,

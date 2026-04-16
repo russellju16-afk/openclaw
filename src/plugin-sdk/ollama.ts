@@ -10,3 +10,10 @@ function loadFacadeModule(): FacadeModule {
 
 export const resolveOllamaApiBase: FacadeModule["resolveOllamaApiBase"] = ((...args) =>
   loadFacadeModule().resolveOllamaApiBase(...args)) as FacadeModule["resolveOllamaApiBase"];
+
+export {
+  isOllamaCompatProvider,
+  resolveOllamaCompatNumCtxEnabled,
+  shouldInjectOllamaCompatNumCtx,
+  wrapOllamaCompatNumCtx,
+} from "./ollama-runtime.js";

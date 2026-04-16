@@ -7,6 +7,7 @@ import { resolveAgentOutboundIdentity } from "../infra/outbound/identity.js";
 import { buildOutboundSessionContext } from "../infra/outbound/session-context.js";
 import { getChildLogger } from "../logging.js";
 import {
+  resolveCronDeliveryBestEffort,
   resolveFailureDestination,
   type CronFailureDeliveryPlan,
   type CronFailureDestinationInput,
@@ -17,6 +18,7 @@ import { resolveDeliveryTarget } from "./isolated-agent/delivery-target.js";
 import type { CronMessageChannel } from "./types.js";
 
 export {
+  resolveCronDeliveryBestEffort,
   resolveCronDeliveryPlan,
   resolveFailureDestination,
   type CronDeliveryPlan,

@@ -1051,6 +1051,41 @@ describe("gateway server cron", () => {
     }
   }, 45_000);
 
+  test("does not fall back to primary group delivery failures by default", async () => {
+    const { prevSkipCron } = await setupCronTestRun({
+      tempPrefix: "openclaw-gw-cron-failure-group-default-besteffort-",
+      cronEnabled: false,
+    });
+
+    const { server, ws } = await startServerWithClient();
+    await connectOk(ws);
+
+    try {
+      cronIsolatedRun.mockResolvedValueOnce({ status: "error", summary: "delivery failed" });
+      const jobId = await addWebhookCronJob({
+        ws,
+        name: "group delivery fallback suppressed",
+        sessionTarget: "isolated",
+        delivery: {
+          mode: "announce",
+          channel: "feishu",
+          to: "chat:oc_group_123",
+        },
+      });
+
+      const finished = waitForCronEvent(
+        ws,
+        (payload) => payload?.jobId === jobId && payload?.action === "finished",
+      );
+      await runCronJobForce(ws, jobId);
+      await finished;
+
+      expect(sendFailureNotificationAnnounceMock).not.toHaveBeenCalled();
+    } finally {
+      await cleanupCronTestRun({ ws, server, prevSkipCron });
+    }
+  }, 45_000);
+
   test("ignores non-string cron.webhookToken values without crashing webhook delivery", async () => {
     const { prevSkipCron } = await setupCronTestRun({
       tempPrefix: "openclaw-gw-cron-webhook-secretinput-",

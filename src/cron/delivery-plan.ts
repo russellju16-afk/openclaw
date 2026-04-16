@@ -26,6 +26,30 @@ function normalizeChannel(value: unknown): CronMessageChannel | undefined {
   return trimmed as CronMessageChannel;
 }
 
+function looksLikeGroupTarget(value: unknown): boolean {
+  if (typeof value !== "string") {
+    return false;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return false;
+  }
+  const lower = trimmed.toLowerCase();
+  return (
+    lower.startsWith("chat:") ||
+    lower.startsWith("group:") ||
+    lower.includes(":group:")
+  );
+}
+
+function looksLikeGroupSessionKey(value: unknown): boolean {
+  if (typeof value !== "string") {
+    return false;
+  }
+  const trimmed = value.trim().toLowerCase();
+  return trimmed.includes(":group:");
+}
+
 export function resolveCronDeliveryPlan(job: CronJob): CronDeliveryPlan {
   const delivery = job.delivery;
   const hasDelivery = delivery && typeof delivery === "object";
@@ -83,6 +107,20 @@ export function resolveCronDeliveryPlan(job: CronJob): CronDeliveryPlan {
     source: "delivery",
     requested: resolvedMode === "announce",
   };
+}
+
+export function resolveCronDeliveryBestEffort(job: CronJob): boolean {
+  if (job.delivery?.bestEffort === true) {
+    return true;
+  }
+  if (job.delivery?.bestEffort === false) {
+    return false;
+  }
+  const deliveryPlan = resolveCronDeliveryPlan(job);
+  if (deliveryPlan.mode !== "announce") {
+    return false;
+  }
+  return looksLikeGroupTarget(deliveryPlan.to) || looksLikeGroupSessionKey(job.sessionKey);
 }
 
 export type CronFailureDeliveryPlan = {

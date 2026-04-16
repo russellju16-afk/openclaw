@@ -1297,6 +1297,7 @@ function appendAssistantTranscriptMessage(params: {
     transcriptPath,
     message: params.message,
     label: params.label,
+    content: params.content,
     idempotencyKey: params.idempotencyKey,
     abortMeta: params.abortMeta,
   });

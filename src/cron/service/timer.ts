@@ -9,7 +9,7 @@ import {
   failTaskRunByRunId,
 } from "../../tasks/task-executor.js";
 import { clearCronJobActive, markCronJobActive } from "../active-jobs.js";
-import { resolveCronDeliveryPlan } from "../delivery-plan.js";
+import { resolveCronDeliveryBestEffort, resolveCronDeliveryPlan } from "../delivery-plan.js";
 import { sweepCronRunSessions } from "../session-reaper.js";
 import type {
   CronDeliveryStatus,
@@ -431,7 +431,7 @@ export function applyJobResult(
     job.state.consecutiveErrors = (job.state.consecutiveErrors ?? 0) + 1;
     const alertConfig = resolveFailureAlert(state, job);
     if (alertConfig && job.state.consecutiveErrors >= alertConfig.after) {
-      const isBestEffort = job.delivery?.bestEffort === true;
+      const isBestEffort = resolveCronDeliveryBestEffort(job);
       if (!isBestEffort) {
         const now = state.deps.nowMs();
         const lastAlert = job.state.lastFailureAlertAtMs;

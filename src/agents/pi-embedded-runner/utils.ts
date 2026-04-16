@@ -1,3 +1,4 @@
+import { formatErrorMessage } from "../../infra/errors.js";
 import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
 import type { ReasoningLevel, ThinkLevel } from "../../auto-reply/thinking.js";
 
@@ -14,6 +15,10 @@ export function mapThinkingLevel(level?: ThinkLevel): ThinkingLevel {
     return "medium";
   }
   return level;
+}
+
+export function describeUnknownError(error: unknown): string {
+  return formatErrorMessage(error);
 }
 
 export type { ReasoningLevel, ThinkLevel };

@@ -267,4 +267,46 @@ describe("CronService failure alerts", () => {
     cron.stop();
     await store.cleanup();
   });
+
+  it("treats group announce delivery as best-effort by default for failure alerts", async () => {
+    const store = await makeStorePath();
+    const sendCronFailureAlert = vi.fn(async () => undefined);
+    const runIsolatedAgentJob = vi.fn(async () => ({
+      status: "error" as const,
+      error: "temporary upstream error",
+    }));
+
+    const cron = createFailureAlertCron({
+      storePath: store.storePath,
+      cronConfig: {
+        failureAlert: {
+          enabled: true,
+          after: 1,
+        },
+      },
+      runIsolatedAgentJob,
+      sendCronFailureAlert,
+    });
+
+    await cron.start();
+    const job = await cron.add({
+      name: "group alert default best effort job",
+      enabled: true,
+      schedule: { kind: "every", everyMs: 60_000 },
+      sessionTarget: "isolated",
+      wakeMode: "next-heartbeat",
+      payload: { kind: "agentTurn", message: "run report" },
+      delivery: {
+        mode: "announce",
+        channel: "feishu",
+        to: "chat:oc_group_123",
+      },
+    });
+
+    await cron.run(job.id, "force");
+    expect(sendCronFailureAlert).not.toHaveBeenCalled();
+
+    cron.stop();
+    await store.cleanup();
+  });
 });

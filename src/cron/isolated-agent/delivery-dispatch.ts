@@ -15,6 +15,7 @@ import {
   normalizeOptionalLowercaseString,
   normalizeOptionalString,
 } from "../../shared/string-coerce.js";
+import { resolveCronDeliveryBestEffort as resolveCronDeliveryBestEffortShared } from "../delivery-plan.js";
 import { hasScheduledNextRunAtMs } from "../service/jobs.js";
 import type { CronJob, CronRunTelemetry } from "../types.js";
 import type { DeliveryTargetResolution } from "./delivery-target.js";
@@ -50,7 +51,7 @@ export function matchesMessagingToolDeliveryTarget(
 }
 
 export function resolveCronDeliveryBestEffort(job: CronJob): boolean {
-  return job.delivery?.bestEffort === true;
+  return resolveCronDeliveryBestEffortShared(job);
 }
 
 export type SuccessfulDeliveryTarget = Extract<DeliveryTargetResolution, { ok: true }>;
