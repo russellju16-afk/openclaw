@@ -5,7 +5,6 @@ import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import {
   pluginSdkDocMetadata,
-  resolvePluginSdkDocImportSpecifier,
   type PluginSdkDocCategory,
   type PluginSdkDocEntrypoint,
 } from "../../scripts/lib/plugin-sdk-doc-metadata.ts";
@@ -36,7 +35,7 @@ export type PluginSdkApiExport = {
 
 export type PluginSdkApiModule = {
   category: PluginSdkDocCategory;
-  entrypoint: PluginSdkDocEntrypoint;
+  entrypoint: string;
   exports: PluginSdkApiExport[];
   importSpecifier: string;
   source: PluginSdkApiSourceLink;
@@ -334,16 +333,30 @@ function sortExports(left: PluginSdkApiExport, right: PluginSdkApiExport): numbe
   return left.exportName.localeCompare(right.exportName);
 }
 
+function resolveEntrypointImportSpecifier(entrypoint: string): string {
+  return entrypoint === "index" ? "openclaw/plugin-sdk" : `openclaw/plugin-sdk/${entrypoint}`;
+}
+
+function resolveEntrypointCategory(entrypoint: string): PluginSdkDocCategory {
+  const documented = pluginSdkDocMetadata[entrypoint as PluginSdkDocEntrypoint];
+  if (documented) {
+    return documented.category;
+  }
+  // Undocumented entrypoints are included in the baseline with a visible marker
+  // so API drift is never silently hidden. Assign "utilities" as the default.
+  return "utilities";
+}
+
 function buildModuleSurface(params: {
   checker: ts.TypeChecker;
   printer: ts.Printer;
   program: ts.Program;
   repoRoot: string;
-  entrypoint: PluginSdkDocEntrypoint;
+  entrypoint: string;
 }): PluginSdkApiModule {
   const { checker, printer, program, repoRoot, entrypoint } = params;
-  const metadata = pluginSdkDocMetadata[entrypoint];
-  const importSpecifier = resolvePluginSdkDocImportSpecifier(entrypoint);
+  const category = resolveEntrypointCategory(entrypoint);
+  const importSpecifier = resolveEntrypointImportSpecifier(entrypoint);
   const moduleSourcePath = path.join(repoRoot, "src", "plugin-sdk", `${entrypoint}.ts`);
   const sourceFile = program.getSourceFile(moduleSourcePath);
   assert(sourceFile, `Missing source file for ${importSpecifier}`);
@@ -366,7 +379,7 @@ function buildModuleSurface(params: {
     .toSorted(sortExports);
 
   return {
-    category: metadata.category,
+    category,
     entrypoint,
     exports,
     importSpecifier,
@@ -414,7 +427,7 @@ export async function renderPluginSdkApiBaseline(params?: {
   const repoRoot = params?.repoRoot ?? resolveRepoRoot();
   validateMetadata();
   const { checker, printer, program } = createCompilerContext(repoRoot);
-  const modules = (Object.keys(pluginSdkDocMetadata) as PluginSdkDocEntrypoint[])
+  const modules = pluginSdkEntrypoints
     .map((entrypoint) =>
       buildModuleSurface({
         checker,
@@ -473,6 +486,19 @@ function validateMetadata(): void {
       canonicalEntrypoints.has(entrypoint),
       `Metadata entrypoint ${entrypoint} is not exported in the Plugin SDK.`,
     );
+  }
+
+  // Warn loudly for entrypoints present in the export graph but missing from
+  // doc metadata. These are included in the baseline with category "utilities"
+  // so API drift is never silently hidden, but they should be documented.
+  const undocumented = [...canonicalEntrypoints].filter((e) => !metadataEntrypoints.has(e));
+  if (undocumented.length > 0) {
+    console.warn(
+      `[plugin-sdk-api-baseline] ${undocumented.length} entrypoint(s) are present in the export graph but missing from pluginSdkDocMetadata — included in baseline with category "utilities". Consider adding them to scripts/lib/plugin-sdk-doc-metadata.ts:`,
+    );
+    for (const e of undocumented.toSorted()) {
+      console.warn(`  [undocumented] ${e}`);
+    }
   }
 }
 
