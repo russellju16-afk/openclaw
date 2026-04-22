@@ -20,8 +20,12 @@ function loadBundledChannelPublicArtifact(
         error instanceof Error &&
         error.message.startsWith("Unable to resolve bundled plugin public surface ")
       ) {
+        // Artifact file is absent for this candidate — try the next basename.
         continue;
       }
+      // Any other error (module eval crash, syntax error, etc.) means the
+      // artifact exists but is broken. Surface it so doctor --fix isn't a no-op.
+      throw error;
     }
   }
   return undefined;

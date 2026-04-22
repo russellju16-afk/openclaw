@@ -16,14 +16,25 @@ function loadPluginRuntime(): PluginRuntimeModule | null {
   if (pluginRuntimeModule) {
     return pluginRuntimeModule;
   }
+  let lastError: unknown;
   for (const candidate of RUNTIME_MODULE_CANDIDATES) {
     try {
       pluginRuntimeModule = require(candidate) as PluginRuntimeModule;
       return pluginRuntimeModule;
-    } catch {
-      // Try source/runtime candidates in order.
+    } catch (err) {
+      const code = (err as { code?: string }).code;
+      if (code === "MODULE_NOT_FOUND") {
+        // Candidate not present — try the next one.
+        lastError = err;
+        continue;
+      }
+      // Any other error (eval-time crash, syntax error, etc.) is a real
+      // failure: surface it rather than silently returning no backends.
+      throw err;
     }
   }
+  // All candidates were absent (MODULE_NOT_FOUND on every path).
+  void lastError;
   return null;
 }
 

@@ -374,7 +374,8 @@ export function resolvePluginSetupRegistry(params?: {
     let mod: OpenClawPluginModule;
     try {
       mod = getJiti(setupSource)(setupSource) as OpenClawPluginModule;
-    } catch {
+    } catch (err) {
+      console.warn(`[setup-registry] failed to load plugin setup module ${setupSource}:`, err);
       continue;
     }
 
@@ -442,7 +443,11 @@ export function resolvePluginSetupRegistry(params?: {
         // Keep setup registration sync-only.
         ignoreAsyncSetupRegisterResult(result);
       }
-    } catch {
+    } catch (err) {
+      console.warn(
+        `[setup-registry] plugin register() threw for ${record.id} (${setupSource}):`,
+        err,
+      );
       continue;
     }
   }
@@ -493,7 +498,8 @@ export function resolvePluginSetupProvider(params: {
   let mod: OpenClawPluginModule;
   try {
     mod = getJiti(setupSource)(setupSource) as OpenClawPluginModule;
-  } catch {
+  } catch (err) {
+    console.warn(`[setup-registry] failed to load plugin setup module ${setupSource}:`, err);
     setCachedSetupValue(setupProviderCache, cacheKey, null);
     return undefined;
   }
@@ -544,7 +550,11 @@ export function resolvePluginSetupProvider(params: {
       // Keep setup registration sync-only.
       ignoreAsyncSetupRegisterResult(result);
     }
-  } catch {
+  } catch (err) {
+    console.warn(
+      `[setup-registry] plugin register() threw for ${record.id} (${setupSource}):`,
+      err,
+    );
     setCachedSetupValue(setupProviderCache, cacheKey, null);
     return undefined;
   }

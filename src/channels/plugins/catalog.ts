@@ -133,8 +133,10 @@ function loadCatalogEntriesFromPaths(paths: Iterable<string>): ExternalCatalogEn
     try {
       const payload = JSON.parse(fs.readFileSync(resolvedPath, "utf-8")) as unknown;
       entries.push(...parseCatalogEntries(payload));
-    } catch {
-      // Ignore invalid catalog files.
+    } catch (err) {
+      // Log the failure so operators can diagnose missing catalog entries.
+      // Graceful degradation is intentional; do not rethrow.
+      console.warn(`[channels/catalog] failed to parse ${resolvedPath}:`, err);
     }
   }
   return entries;

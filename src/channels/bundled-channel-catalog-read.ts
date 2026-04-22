@@ -38,7 +38,11 @@ function listBundledExtensionPackageJsonPaths(): string[] {
         .filter((entry) => entry.isDirectory())
         .map((entry) => path.join(extensionsRoot, entry.name, "package.json"))
         .filter((entry) => fs.existsSync(entry));
-    } catch {
+    } catch (err) {
+      console.warn(
+        `[bundled-channel-catalog] failed to read extensions dir ${extensionsRoot}:`,
+        err,
+      );
       continue;
     }
   }
@@ -53,7 +57,8 @@ function readBundledExtensionCatalogEntriesSync(): ChannelCatalogEntryLike[] {
         fs.readFileSync(packageJsonPath, "utf8"),
       ) as ChannelCatalogEntryLike;
       entries.push(payload);
-    } catch {
+    } catch (err) {
+      console.warn(`[bundled-channel-catalog] failed to parse ${packageJsonPath}:`, err);
       continue;
     }
   }
@@ -71,7 +76,8 @@ function readOfficialCatalogFileSync(): ChannelCatalogEntryLike[] {
         entries?: unknown;
       };
       return Array.isArray(payload.entries) ? (payload.entries as ChannelCatalogEntryLike[]) : [];
-    } catch {
+    } catch (err) {
+      console.warn(`[bundled-channel-catalog] failed to parse catalog file ${candidate}:`, err);
       continue;
     }
   }

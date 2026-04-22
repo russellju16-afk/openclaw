@@ -26,7 +26,10 @@ export async function readJsonFileWithFallback<T>(
     if (code === "ENOENT") {
       return { value: fallback, exists: false };
     }
-    return { value: fallback, exists: false };
+    // Non-ENOENT errors (EACCES, EISDIR, EIO, etc.) must not be silently
+    // treated as "file missing" — callers like createPersistentDedupe could
+    // otherwise reset state on a temporarily-unreadable file.
+    throw err;
   }
 }
 
