@@ -232,7 +232,24 @@ function normalizeDiagnosticEventsModule(mod) {
 function tryLoadMonolithicSdk() {
   try {
     return loadMonolithicSdk();
-  } catch {
+  } catch (err) {
+    // Distinguish "compat module absent" (valid install shape, stay silent)
+    // from "compat module failed to load" (syntax error / missing import /
+    // jiti crash — must surface, else the whole plugin-sdk proxy silently
+    // loses its monolithic exports).
+    const code = err && err.code;
+    const message = err && err.message;
+    const isAbsent =
+      code === "MODULE_NOT_FOUND" ||
+      code === "ERR_MODULE_NOT_FOUND" ||
+      code === "ENOENT" ||
+      (typeof message === "string" && message.includes("Cannot find module"));
+    if (!isAbsent) {
+      console.warn(
+        "[openclaw/plugin-sdk root-alias] tryLoadMonolithicSdk: real load failure, returning null to preserve proxy contract:",
+        err,
+      );
+    }
     return null;
   }
 }
