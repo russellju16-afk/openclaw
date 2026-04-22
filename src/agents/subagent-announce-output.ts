@@ -1,4 +1,5 @@
 import { isSilentReplyText, SILENT_REPLY_TOKEN } from "../auto-reply/tokens.js";
+import { readSessionMessages } from "../gateway/session-utils.fs.js";
 import { extractTextFromChatContent } from "../shared/chat-content.js";
 import {
   captureSubagentCompletionReplyUsing,
@@ -266,6 +267,36 @@ function selectSubagentOutputText(
   return snapshot.latestRawText;
 }
 
+function readTranscriptMessagesForSession(sessionKey: string): Array<unknown> {
+  try {
+    const cfg = subagentAnnounceOutputDeps.loadConfig();
+    const agentId = resolveAgentIdFromSessionKey(sessionKey);
+    const storePath = resolveStorePath(cfg.session?.store, { agentId });
+    const entry = loadSessionStore(storePath)[sessionKey] as
+      | { sessionId?: unknown; sessionFile?: unknown }
+      | undefined;
+    const sessionId = typeof entry?.sessionId === "string" ? entry.sessionId.trim() : "";
+    if (!sessionId) {
+      return [];
+    }
+    const sessionFile = typeof entry?.sessionFile === "string" ? entry.sessionFile : undefined;
+    return readSessionMessages(sessionId, storePath, sessionFile);
+  } catch {
+    return [];
+  }
+}
+
+export function readPersistedSubagentOutput(
+  sessionKey: string,
+  outcome?: SubagentRunOutcome,
+): string | undefined {
+  const transcriptSelected = selectSubagentOutputText(
+    summarizeSubagentOutputHistory(readTranscriptMessagesForSession(sessionKey)),
+    outcome,
+  );
+  return transcriptSelected?.trim() ? transcriptSelected : undefined;
+}
+
 export async function readSubagentOutput(
   sessionKey: string,
   outcome?: SubagentRunOutcome,
@@ -283,7 +314,10 @@ export async function readSubagentOutput(
     sessionKey,
     limit: 100,
   });
-  return latestAssistant?.trim() ? latestAssistant : undefined;
+  if (latestAssistant?.trim()) {
+    return latestAssistant;
+  }
+  return readPersistedSubagentOutput(sessionKey, outcome);
 }
 
 export async function readLatestSubagentOutputWithRetry(params: {
@@ -349,6 +383,10 @@ export async function captureSubagentCompletionReply(
   sessionKey: string,
   options?: { waitForReply?: boolean },
 ): Promise<string | undefined> {
+  const persisted = readPersistedSubagentOutput(sessionKey);
+  if (persisted?.trim()) {
+    return persisted;
+  }
   return await captureSubagentCompletionReplyUsing({
     sessionKey,
     waitForReply: options?.waitForReply,
