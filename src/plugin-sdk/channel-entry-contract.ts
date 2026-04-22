@@ -308,20 +308,33 @@ export function loadBundledEntryExportSync<T>(
   reference: BundledEntryModuleRef,
 ): T {
   const loaded = loadBundledEntryModuleSync(importMetaUrl, reference.specifier);
-  const resolved =
-    loaded && typeof loaded === "object" && "default" in (loaded as Record<string, unknown>)
-      ? (loaded as { default: unknown }).default
-      : loaded;
   if (!reference.exportName) {
+    // No named export requested — unwrap CJS/interop default if present.
+    const resolved =
+      loaded && typeof loaded === "object" && "default" in (loaded as Record<string, unknown>)
+        ? (loaded as { default: unknown }).default
+        : loaded;
     return resolved as T;
   }
-  const record = (resolved ?? loaded) as Record<string, unknown> | undefined;
-  if (!record || !(reference.exportName in record)) {
-    throw new Error(
-      `missing export "${reference.exportName}" from bundled entry module ${reference.specifier}`,
-    );
+  // Named export requested: prefer the name from the top-level namespace first
+  // (covers ESM modules that export both `default` and named bindings).
+  // Only fall back to looking inside `default` when the namespace itself does
+  // not contain the key (covers CJS modules where all exports live on the
+  // default object).
+  const namespace = loaded as Record<string, unknown> | undefined;
+  if (namespace && reference.exportName in namespace) {
+    return namespace[reference.exportName] as T;
   }
-  return record[reference.exportName] as T;
+  const defaultExport =
+    namespace && "default" in namespace
+      ? (namespace.default as Record<string, unknown> | undefined)
+      : undefined;
+  if (defaultExport && typeof defaultExport === "object" && reference.exportName in defaultExport) {
+    return defaultExport[reference.exportName] as T;
+  }
+  throw new Error(
+    `missing export "${reference.exportName}" from bundled entry module ${reference.specifier}`,
+  );
 }
 
 export function defineBundledChannelEntry<TPlugin = ChannelPlugin>({
