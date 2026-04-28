@@ -309,6 +309,58 @@ describe("installBundledRuntimeDeps", () => {
     expect(fs.readFileSync(targetPath, "utf8")).toContain("source");
   });
 
+  it("does not rewrite already-materialized hardlinked mirror chunks", () => {
+    const tempDir = makeTempDir();
+    const sourcePath = path.join(tempDir, "dist", "accounts.js");
+    const targetPath = path.join(tempDir, "stage", "dist", "accounts.js");
+    fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
+    fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+    fs.writeFileSync(
+      sourcePath,
+      [
+        `//#region extensions/slack/src/accounts.ts`,
+        `export const marker = "source";`,
+        `//#endregion`,
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    fs.linkSync(sourcePath, targetPath);
+    const renameSpy = vi.spyOn(fs, "renameSync");
+
+    materializeBundledRuntimeMirrorDistFile(sourcePath, targetPath);
+
+    expect(renameSpy).not.toHaveBeenCalled();
+    expect(fs.readFileSync(targetPath, "utf8")).toContain("source");
+  });
+
+  it("does not rewrite already-materialized copied mirror chunks", () => {
+    const tempDir = makeTempDir();
+    const sourcePath = path.join(tempDir, "dist", "accounts.js");
+    const targetPath = path.join(tempDir, "stage", "dist", "accounts.js");
+    fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
+    fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+    fs.writeFileSync(
+      sourcePath,
+      [
+        `//#region extensions/slack/src/accounts.ts`,
+        `export const marker = "source";`,
+        `//#endregion`,
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    fs.copyFileSync(sourcePath, targetPath);
+    const sourceStat = fs.statSync(sourcePath);
+    fs.utimesSync(targetPath, sourceStat.atime, sourceStat.mtime);
+    const renameSpy = vi.spyOn(fs, "renameSync");
+
+    materializeBundledRuntimeMirrorDistFile(sourcePath, targetPath);
+
+    expect(renameSpy).not.toHaveBeenCalled();
+    expect(fs.readFileSync(targetPath, "utf8")).toContain("source");
+  });
+
   it("replaces stale mirror files without unlinking the readable target", () => {
     const tempDir = makeTempDir();
     const sourcePath = path.join(tempDir, "dist", "accounts.js");

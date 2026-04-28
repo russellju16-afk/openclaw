@@ -113,6 +113,32 @@ export function shouldMaterializeBundledRuntimeMirrorDistFile(sourcePath: string
   return true;
 }
 
+function isSameFilesystemFile(left: fs.Stats, right: fs.Stats): boolean {
+  return left.ino !== 0 && left.dev === right.dev && left.ino === right.ino;
+}
+
+function isMaterializedBundledRuntimeMirrorDistFileCurrent(
+  sourcePath: string,
+  targetPath: string,
+): boolean {
+  try {
+    const sourceStat = fs.statSync(sourcePath);
+    const targetLstat = fs.lstatSync(targetPath);
+    if (!sourceStat.isFile() || !targetLstat.isFile() || targetLstat.isSymbolicLink()) {
+      return false;
+    }
+    const targetStat = fs.statSync(targetPath);
+    if (isSameFilesystemFile(sourceStat, targetStat)) {
+      return true;
+    }
+    return (
+      sourceStat.size === targetStat.size && Math.abs(sourceStat.mtimeMs - targetStat.mtimeMs) <= 1
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function materializeBundledRuntimeMirrorDistFile(
   sourcePath: string,
   targetPath: string,
@@ -120,16 +146,10 @@ export function materializeBundledRuntimeMirrorDistFile(
   if (path.resolve(sourcePath) === path.resolve(targetPath)) {
     return;
   }
-  try {
-    if (
-      fs.realpathSync(sourcePath) === fs.realpathSync(targetPath) &&
-      !fs.lstatSync(targetPath).isSymbolicLink()
-    ) {
-      return;
-    }
-  } catch {
-    // Missing targets are expected before the mirror file is materialized.
+  if (isMaterializedBundledRuntimeMirrorDistFileCurrent(sourcePath, targetPath)) {
+    return;
   }
+  const sourceStat = fs.statSync(sourcePath);
   fs.mkdirSync(path.dirname(targetPath), { recursive: true, mode: 0o755 });
   const tempPath = path.join(
     path.dirname(targetPath),
@@ -144,8 +164,8 @@ export function materializeBundledRuntimeMirrorDistFile(
   }
   if (copied) {
     try {
-      const sourceMode = fs.statSync(sourcePath).mode;
-      fs.chmodSync(tempPath, sourceMode | 0o600);
+      fs.chmodSync(tempPath, sourceStat.mode | 0o600);
+      fs.utimesSync(tempPath, sourceStat.atime, sourceStat.mtime);
     } catch {
       // Readable materialized chunks are enough for ESM loading.
     }
