@@ -309,6 +309,40 @@ describe("installBundledRuntimeDeps", () => {
     expect(fs.readFileSync(targetPath, "utf8")).toContain("source");
   });
 
+  it("replaces stale mirror files without unlinking the readable target", () => {
+    const tempDir = makeTempDir();
+    const sourcePath = path.join(tempDir, "dist", "accounts.js");
+    const targetPath = path.join(tempDir, "stage", "dist", "accounts.js");
+    fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
+    fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+    fs.writeFileSync(
+      sourcePath,
+      [
+        `//#region extensions/slack/src/accounts.ts`,
+        `export const marker = "source";`,
+        `//#endregion`,
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    fs.writeFileSync(
+      targetPath,
+      [
+        `//#region extensions/slack/src/accounts.ts`,
+        `export const marker = "stale";`,
+        `//#endregion`,
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    const rmSpy = vi.spyOn(fs, "rmSync");
+
+    materializeBundledRuntimeMirrorDistFile(sourcePath, targetPath);
+
+    expect(rmSpy).not.toHaveBeenCalledWith(targetPath, expect.anything());
+    expect(fs.readFileSync(targetPath, "utf8")).toContain("source");
+  });
+
   it("uses a real write probe for runtime dependency roots", () => {
     const accessSpy = vi.spyOn(fs, "accessSync").mockImplementation(() => undefined);
     const mkdirSpy = vi.spyOn(fs, "mkdtempSync").mockImplementation(() => {

@@ -131,18 +131,32 @@ export function materializeBundledRuntimeMirrorDistFile(
     // Missing targets are expected before the mirror file is materialized.
   }
   fs.mkdirSync(path.dirname(targetPath), { recursive: true, mode: 0o755 });
-  fs.rmSync(targetPath, { recursive: true, force: true });
+  const tempPath = path.join(
+    path.dirname(targetPath),
+    `.openclaw-mirror-dist-${process.pid}-${process.hrtime.bigint()}-${path.basename(targetPath)}.tmp`,
+  );
+  let copied = false;
   try {
-    fs.linkSync(sourcePath, targetPath);
-    return;
+    fs.linkSync(sourcePath, tempPath);
   } catch {
-    fs.copyFileSync(sourcePath, targetPath);
+    fs.copyFileSync(sourcePath, tempPath);
+    copied = true;
+  }
+  if (copied) {
+    try {
+      const sourceMode = fs.statSync(sourcePath).mode;
+      fs.chmodSync(tempPath, sourceMode | 0o600);
+    } catch {
+      // Readable materialized chunks are enough for ESM loading.
+    }
   }
   try {
-    const sourceMode = fs.statSync(sourcePath).mode;
-    fs.chmodSync(targetPath, sourceMode | 0o600);
+    fs.renameSync(tempPath, targetPath);
   } catch {
-    // Readable materialized chunks are enough for ESM loading.
+    fs.rmSync(targetPath, { recursive: true, force: true });
+    fs.renameSync(tempPath, targetPath);
+  } finally {
+    fs.rmSync(tempPath, { force: true });
   }
 }
 
