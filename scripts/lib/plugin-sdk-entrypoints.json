@@ -137,6 +137,7 @@
   "channel-contract-testing",
   "dangerous-name-runtime",
   "command-auth",
+  "zalouser",
   "command-auth-native",
   "command-gating",
   "command-primitives-runtime",
