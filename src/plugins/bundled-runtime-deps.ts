@@ -1287,6 +1287,37 @@ export function createBundledRuntimeDepsInstallArgs(missingSpecs: readonly strin
   return ["install", "--ignore-scripts", ...missingSpecs];
 }
 
+function collectPosixHomebrewNpmCliCandidates(
+  execPath: string,
+  pathImpl: typeof path.posix,
+): string[] {
+  const parts = execPath.split(pathImpl.sep).filter(Boolean);
+  const cellarIndex = parts.lastIndexOf("Cellar");
+  if (cellarIndex <= 0) {
+    return [];
+  }
+  const formula = parts[cellarIndex + 1];
+  const tail = parts.slice(cellarIndex + 3);
+  if (!formula || !/^node(?:@[\w.-]+)?$/u.test(formula) || tail.length !== 2) {
+    return [];
+  }
+  if (tail[0] !== "bin" || tail[1] !== "node") {
+    return [];
+  }
+
+  const prefixParts = parts.slice(0, cellarIndex);
+  return [
+    pathImpl.resolve(pathImpl.sep, ...prefixParts, "lib/node_modules/npm/bin/npm-cli.js"),
+    pathImpl.resolve(
+      pathImpl.sep,
+      ...prefixParts,
+      "opt",
+      formula,
+      "lib/node_modules/npm/bin/npm-cli.js",
+    ),
+  ];
+}
+
 export function resolveBundledRuntimeDepsNpmRunner(params: {
   npmArgs: string[];
   env?: NodeJS.ProcessEnv;
@@ -1304,6 +1335,9 @@ export function resolveBundledRuntimeDepsNpmRunner(params: {
     pathImpl.resolve(nodeDir, "../lib/node_modules/npm/bin/npm-cli.js"),
     pathImpl.resolve(nodeDir, "node_modules/npm/bin/npm-cli.js"),
   ];
+  if (platform !== "win32") {
+    npmCliCandidates.push(...collectPosixHomebrewNpmCliCandidates(execPath, path.posix));
+  }
   const npmCliPath = npmCliCandidates.find(
     (candidate) => pathImpl.isAbsolute(candidate) && existsSync(candidate),
   );

@@ -203,6 +203,40 @@ describe("resolveBundledRuntimeDepsNpmRunner", () => {
     });
   });
 
+  it("uses Homebrew prefix npm when Node resolves into Cellar", () => {
+    const execPath = "/opt/homebrew/Cellar/node/25.8.2/bin/node";
+    const npmCliPath = "/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js";
+    const runner = resolveBundledRuntimeDepsNpmRunner({
+      env: {},
+      execPath,
+      existsSync: (candidate) => candidate === npmCliPath,
+      npmArgs: ["install", "acpx@0.5.3"],
+      platform: "darwin",
+    });
+
+    expect(runner).toEqual({
+      command: execPath,
+      args: [npmCliPath, "install", "acpx@0.5.3"],
+    });
+  });
+
+  it("uses Homebrew opt npm for versioned Node formulas", () => {
+    const execPath = "/usr/local/Cellar/node@22/22.13.1/bin/node";
+    const npmCliPath = "/usr/local/opt/node@22/lib/node_modules/npm/bin/npm-cli.js";
+    const runner = resolveBundledRuntimeDepsNpmRunner({
+      env: {},
+      execPath,
+      existsSync: (candidate) => candidate === npmCliPath,
+      npmArgs: ["install", "acpx@0.5.3"],
+      platform: "darwin",
+    });
+
+    expect(runner).toEqual({
+      command: execPath,
+      args: [npmCliPath, "install", "acpx@0.5.3"],
+    });
+  });
+
   it("refuses Windows shell fallback when no safe npm executable is available", () => {
     expect(() =>
       resolveBundledRuntimeDepsNpmRunner({
