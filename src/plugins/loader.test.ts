@@ -1587,6 +1587,165 @@ module.exports = {
     expect(registry.plugins.find((entry) => entry.id === "alpha")?.status).toBe("loaded");
   });
 
+  it("does not apply bundled runtime dependency aliases to external plugins", async () => {
+    const bundledDir = makeTempDir();
+    const stageDir = makeTempDir();
+    const bundledPlugin = writePlugin({
+      id: "alpha",
+      dir: path.join(bundledDir, "alpha"),
+      filename: "index.ts",
+      body: `
+        import runtimeDep from "shared-runtime";
+        export default {
+          id: "alpha",
+          register(api) {
+            api.registerCommand({
+              name: "bundled-runtime-marker",
+              description: "Bundled runtime marker",
+              handler: () => ({ text: runtimeDep.marker }),
+            });
+          },
+        };
+      `,
+    });
+    process.env.OPENCLAW_BUNDLED_PLUGINS_DIR = bundledDir;
+    process.env.OPENCLAW_PLUGIN_STAGE_DIR = stageDir;
+    fs.writeFileSync(
+      path.join(bundledPlugin.dir, "package.json"),
+      JSON.stringify(
+        {
+          name: "@openclaw/alpha",
+          version: "1.0.0",
+          type: "module",
+          dependencies: {
+            "shared-runtime": "1.0.0",
+          },
+          openclaw: { extensions: ["./index.ts"] },
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+    fs.writeFileSync(
+      path.join(bundledPlugin.dir, "openclaw.plugin.json"),
+      JSON.stringify(
+        {
+          id: "alpha",
+          enabledByDefault: true,
+          configSchema: EMPTY_PLUGIN_SCHEMA,
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+
+    const bundledRegistry = loadOpenClawPlugins({
+      cache: false,
+      config: { plugins: { enabled: true } },
+      bundledRuntimeDepsInstaller: ({ installRoot }) => {
+        const depRoot = path.join(installRoot, "node_modules", "shared-runtime");
+        fs.mkdirSync(depRoot, { recursive: true });
+        fs.writeFileSync(
+          path.join(installRoot, "package.json"),
+          JSON.stringify({ dependencies: { "shared-runtime": "1.0.0" } }),
+          "utf-8",
+        );
+        fs.writeFileSync(
+          path.join(depRoot, "package.json"),
+          JSON.stringify({
+            name: "shared-runtime",
+            version: "1.0.0",
+            type: "module",
+            exports: "./index.js",
+          }),
+          "utf-8",
+        );
+        fs.writeFileSync(
+          path.join(depRoot, "index.js"),
+          "export default { marker: 'bundled-stage' };\n",
+          "utf-8",
+        );
+      },
+    });
+    expect(bundledRegistry.plugins.find((entry) => entry.id === "alpha")?.status).toBe("loaded");
+
+    useNoBundledPlugins();
+    const externalPlugin = writePlugin({
+      id: "external-local-runtime",
+      filename: "index.ts",
+      body: `
+        import runtimeDep from "shared-runtime";
+        export default {
+          id: "external-local-runtime",
+          register(api) {
+            api.registerCommand({
+              name: "external-local-runtime",
+              description: "External local runtime marker",
+              handler: () => ({ text: runtimeDep.marker }),
+            });
+          },
+        };
+      `,
+    });
+    fs.writeFileSync(
+      path.join(externalPlugin.dir, "package.json"),
+      JSON.stringify(
+        {
+          name: "external-local-runtime",
+          version: "1.0.0",
+          type: "module",
+          dependencies: {
+            "shared-runtime": "1.0.0",
+          },
+          openclaw: { extensions: ["./index.ts"] },
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+    const externalDepRoot = path.join(externalPlugin.dir, "node_modules", "shared-runtime");
+    fs.mkdirSync(externalDepRoot, { recursive: true });
+    fs.writeFileSync(
+      path.join(externalDepRoot, "package.json"),
+      JSON.stringify({
+        name: "shared-runtime",
+        version: "1.0.0",
+        type: "module",
+        exports: "./index.js",
+      }),
+      "utf-8",
+    );
+    fs.writeFileSync(
+      path.join(externalDepRoot, "index.js"),
+      "export default { marker: 'external-local' };\n",
+      "utf-8",
+    );
+
+    const externalRegistry = loadOpenClawPlugins({
+      cache: false,
+      config: {
+        plugins: {
+          load: { paths: [externalPlugin.file] },
+          allow: ["external-local-runtime"],
+          entries: {
+            "external-local-runtime": { enabled: true },
+          },
+        },
+      },
+    });
+    const externalCommand = externalRegistry.commands.find(
+      (entry) => entry.command.name === "external-local-runtime",
+    );
+
+    expect(externalCommand).toBeDefined();
+    await expect(Promise.resolve(externalCommand?.command.handler({} as never))).resolves.toEqual({
+      text: "external-local",
+    });
+  });
+
   it("loads bundled plugins from symlinked package roots with an external stage dir", () => {
     const packageRoot = makeTempDir();
     const stageDir = makeTempDir();

@@ -106,7 +106,7 @@ import {
   restoreMemoryPluginState,
 } from "./memory-state.js";
 import { unwrapDefaultModuleExport } from "./module-export.js";
-import { isPathInside, safeStatSync } from "./path-safety.js";
+import { isPathInside, safeRealpathSync, safeStatSync } from "./path-safety.js";
 import { withProfile } from "./plugin-load-profile.js";
 import {
   createPluginIdScopeSet,
@@ -280,6 +280,7 @@ export function clearPluginLoaderCache(): void {
   pluginLoaderCacheState.clear();
   clearBundledRuntimeDependencyNodePaths();
   bundledRuntimeDependencyJitiAliases.clear();
+  bundledRuntimeDependencyJitiAliasRoots.clear();
   clearAgentHarnesses();
   clearPluginCommands();
   clearCompactionProviders();
@@ -467,6 +468,15 @@ type RuntimeDependencyPackageJson = {
 };
 
 const bundledRuntimeDependencyJitiAliases = new Map<string, string>();
+const bundledRuntimeDependencyJitiAliasRoots = new Set<string>();
+
+function resolveBundledRuntimeDependencyJitiAliasPath(targetPath: string): string {
+  return safeRealpathSync(targetPath) ?? path.resolve(targetPath);
+}
+
+function registerBundledRuntimeDependencyJitiAliasRoot(rootDir: string): void {
+  bundledRuntimeDependencyJitiAliasRoots.add(resolveBundledRuntimeDependencyJitiAliasPath(rootDir));
+}
 
 function readRuntimeDependencyPackageJson(
   packageJsonPath: string,
@@ -612,6 +622,7 @@ function collectRuntimePackageImportTargets(
 }
 
 function registerBundledRuntimeDependencyJitiAliases(rootDir: string): void {
+  registerBundledRuntimeDependencyJitiAliasRoot(rootDir);
   const rootPackageJson = readRuntimeDependencyPackageJson(path.join(rootDir, "package.json"));
   if (!rootPackageJson) {
     return;
@@ -646,8 +657,18 @@ function registerBundledRuntimeDependencyJitiAliases(rootDir: string): void {
   }
 }
 
-function resolveBundledRuntimeDependencyJitiAliasMap(): Record<string, string> | undefined {
+function resolveBundledRuntimeDependencyJitiAliasMap(
+  modulePath: string,
+): Record<string, string> | undefined {
   if (bundledRuntimeDependencyJitiAliases.size === 0) {
+    return undefined;
+  }
+  const resolvedModulePath = resolveBundledRuntimeDependencyJitiAliasPath(modulePath);
+  if (
+    ![...bundledRuntimeDependencyJitiAliasRoots].some((rootDir) =>
+      isPathInside(rootDir, resolvedModulePath),
+    )
+  ) {
     return undefined;
   }
   return Object.fromEntries(
@@ -661,7 +682,7 @@ function createPluginJitiLoader(options: Pick<PluginLoadOptions, "pluginSdkResol
   const jitiLoaders: PluginJitiLoaderCache = new Map();
   return (modulePath: string) => {
     const tryNative = shouldPreferNativeJiti(modulePath);
-    const runtimeAliasMap = resolveBundledRuntimeDependencyJitiAliasMap();
+    const runtimeAliasMap = resolveBundledRuntimeDependencyJitiAliasMap(modulePath);
     return getCachedPluginJitiLoader({
       cache: jitiLoaders,
       modulePath,
@@ -2645,6 +2666,7 @@ export function loadOpenClawPlugins(options: PluginLoadOptions = {}): PluginRegi
             }
           }
           if (path.resolve(installRoot) !== path.resolve(pluginRoot)) {
+            registerBundledRuntimeDependencyJitiAliasRoot(installRoot);
             const packageRoot = resolveBundledRuntimeDependencyPackageRoot(pluginRoot);
             if (packageRoot) {
               registerBundledRuntimeDependencyNodePath(packageRoot);
