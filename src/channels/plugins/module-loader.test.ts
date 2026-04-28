@@ -118,7 +118,7 @@ describe("channel plugin module loader helpers", () => {
         }),
       ).toEqual({ ok: true });
       expect(createJiti).toHaveBeenCalledWith(
-        expect.any(String),
+        expect.stringContaining(modulePath.replace(/\\/g, "/")),
         expect.objectContaining({
           tryNative: shouldExpectNativeJitiForJavaScriptTestRuntime(),
         }),
@@ -126,5 +126,38 @@ describe("channel plugin module loader helpers", () => {
     } finally {
       platformSpy.mockRestore();
     }
+  });
+
+  it("resolves fallback Jiti dependencies from the plugin root", async () => {
+    const loaderModule = await importFreshModule<typeof import("./module-loader.js")>(
+      import.meta.url,
+      "./module-loader.js?scope=plugin-root-deps",
+    );
+    const pluginDir = createTempDir();
+    const depDir = path.join(pluginDir, "node_modules", "local-runtime-dep");
+    const modulePath = path.join(pluginDir, "index.js");
+    fs.mkdirSync(depDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(depDir, "package.json"),
+      JSON.stringify({ name: "local-runtime-dep", main: "./index.js" }),
+      "utf8",
+    );
+    fs.writeFileSync(path.join(depDir, "index.js"), "module.exports = { value: 42 };\n", "utf8");
+    fs.writeFileSync(
+      modulePath,
+      [
+        "require('openclaw/plugin-sdk/account-id');",
+        "module.exports = { dep: require('local-runtime-dep').value };",
+      ].join("\n"),
+      "utf8",
+    );
+
+    expect(
+      loaderModule.loadChannelPluginModule({
+        modulePath,
+        rootDir: pluginDir,
+        shouldTryNativeRequire: () => true,
+      }),
+    ).toEqual({ dep: 42 });
   });
 });

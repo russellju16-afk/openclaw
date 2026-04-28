@@ -18,7 +18,6 @@ function createModuleLoader() {
       importerUrl: import.meta.url,
       argvEntry: process.argv[1],
       preferBuiltDist: true,
-      jitiFilename: import.meta.url,
     });
   };
 }
