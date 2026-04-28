@@ -26,6 +26,7 @@ import { listChannelPlugins } from "./registry.js";
 import type { ChannelPlugin } from "./types.plugin.js";
 
 const LOADER_MODULE_CANDIDATES = [
+  new URL("./plugins/loader.js", import.meta.url),
   new URL("../../plugins/loader.js", import.meta.url),
   new URL("../../plugins/loader.ts", import.meta.url),
 ] as const;

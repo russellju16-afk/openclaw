@@ -223,6 +223,7 @@ function buildCoreDistEntries(): Record<string, string> {
     "infra/boundary-file-read": "src/infra/boundary-file-read.ts",
     "plugins/provider-discovery.runtime": "src/plugins/provider-discovery.runtime.ts",
     "plugins/provider-runtime.runtime": "src/plugins/provider-runtime.runtime.ts",
+    "plugins/loader": "src/plugins/loader.ts",
     "plugins/public-surface-runtime": "src/plugins/public-surface-runtime.ts",
     "plugins/sdk-alias": "src/plugins/sdk-alias.ts",
     "facade-activation-check.runtime": "src/plugin-sdk/facade-activation-check.runtime.ts",

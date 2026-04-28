@@ -22,6 +22,90 @@ assert.equal(typeof matchPluginCommand, "function", "matchPluginCommand missing"
 
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-build-smoke-"));
 
+async function importBuiltReadOnlyChannelModule() {
+  const distRoot = path.join(repoRoot, "dist");
+  for (const entry of fs.readdirSync(distRoot)) {
+    if (!/^read-only-[A-Za-z0-9_-]+\.js$/u.test(entry)) {
+      continue;
+    }
+    const module = await import(pathToFileURL(path.join(distRoot, entry)).href);
+    if (typeof module.listReadOnlyChannelPluginsForConfig === "function") {
+      return module;
+    }
+  }
+  throw new Error("built read-only channel module export missing");
+}
+
+async function assertBuiltReadOnlySetupFallback() {
+  const pluginId = "built-readonly-smoke";
+  const channelId = "built-readonly";
+  const pluginDir = path.join(tempRoot, "readonly-plugin");
+  const setupMarker = path.join(pluginDir, "setup-loaded.txt");
+  const fullMarker = path.join(pluginDir, "full-loaded.txt");
+  fs.mkdirSync(pluginDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(pluginDir, "package.json"),
+    JSON.stringify(
+      {
+        name: "@openclaw/built-readonly-smoke",
+        version: "1.0.0",
+        openclaw: {
+          extensions: ["./index.cjs"],
+          setupEntry: "./setup-entry.cjs",
+        },
+      },
+      null,
+      2,
+    ),
+    "utf8",
+  );
+  fs.writeFileSync(
+    path.join(pluginDir, "openclaw.plugin.json"),
+    JSON.stringify(
+      {
+        id: pluginId,
+        configSchema: { type: "object", additionalProperties: false, properties: {} },
+        channels: [channelId],
+        channelEnvVars: { [channelId]: ["BUILT_READONLY_TOKEN"] },
+      },
+      null,
+      2,
+    ),
+    "utf8",
+  );
+  fs.writeFileSync(
+    path.join(pluginDir, "index.cjs"),
+    `require("node:fs").writeFileSync(${JSON.stringify(fullMarker)}, "loaded", "utf8"); module.exports = { id: ${JSON.stringify(pluginId)}, register() {} };\n`,
+    "utf8",
+  );
+  fs.writeFileSync(
+    path.join(pluginDir, "setup-entry.cjs"),
+    `require("node:fs").writeFileSync(${JSON.stringify(setupMarker)}, "loaded", "utf8"); module.exports = { plugin: { id: ${JSON.stringify(channelId)}, meta: { id: ${JSON.stringify(channelId)}, label: "Built Readonly", selectionLabel: "Built Readonly", docsPath: "/channels/built-readonly", blurb: "setup entry" }, capabilities: { chatTypes: ["direct"] }, config: { listAccountIds: () => ["default"], resolveAccount: () => ({ accountId: "default" }) }, outbound: { deliveryMode: "direct" } } };\n`,
+    "utf8",
+  );
+
+  const { listReadOnlyChannelPluginsForConfig } = await importBuiltReadOnlyChannelModule();
+  const plugins = listReadOnlyChannelPluginsForConfig(
+    {
+      plugins: {
+        load: { paths: [pluginDir] },
+        allow: [pluginId],
+      },
+    },
+    {
+      env: { ...process.env, BUILT_READONLY_TOKEN: "configured" },
+      includePersistedAuthState: false,
+      includeSetupRuntimeFallback: true,
+    },
+  );
+  assert.equal(
+    plugins.some((plugin) => plugin.id === channelId),
+    true,
+  );
+  assert.equal(fs.existsSync(setupMarker), true);
+  assert.equal(fs.existsSync(fullMarker), false);
+}
+
 function cleanup() {
   clearPluginCommands();
   fs.rmSync(tempRoot, { recursive: true, force: true });
@@ -142,5 +226,7 @@ assert.ok(match, "canonical built command registry did not receive the command")
 assert.equal(match.args, "now");
 const result = await match.command.handler({ args: match.args });
 assert.deepEqual(result, { text: "paired:now" });
+
+await assertBuiltReadOnlySetupFallback();
 
 process.stdout.write("[build-smoke] built plugin singleton smoke passed\n");
