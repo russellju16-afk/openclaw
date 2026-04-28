@@ -76,6 +76,10 @@ import {
   pickFallbackThinkingLevel,
 } from "../pi-embedded-helpers.js";
 import { resolveProviderIdForAuth } from "../provider-auth-aliases.js";
+import {
+  createRunProgressSupervisor,
+  type RunProgressFinishParams,
+} from "../run-progress-supervisor.js";
 import { buildAgentRuntimeAuthPlan } from "../runtime-plan/auth.js";
 import { buildAgentRuntimePlan } from "../runtime-plan/build.js";
 import { ensureRuntimePluginsLoaded } from "../runtime-plugins.js";
@@ -181,6 +185,21 @@ function normalizeEmbeddedRunAttemptResult(
       activeCount: 0,
     },
     replayMetadata: resolveAttemptReplayMetadata(raw),
+  };
+}
+
+function resolveRunProgressFinishFromResult(
+  result: EmbeddedPiRunResult,
+  durationMs: number,
+): RunProgressFinishParams {
+  const errorPayload = result.payloads?.find((payload) => payload.isError && payload.text);
+  const error = result.meta.error?.message ?? errorPayload?.text;
+  const aborted = result.meta.aborted === true;
+  return {
+    success: !aborted && !error,
+    ...(aborted ? { aborted: true } : {}),
+    ...(error ? { error } : {}),
+    durationMs,
   };
 }
 
@@ -741,6 +760,30 @@ export async function runEmbeddedPiAgent(
       // repeated initialization/connection overhead per attempt.
       ensureContextEnginesInitialized();
       const contextEngine = await resolveContextEngine(params.config);
+      const runProgress = createRunProgressSupervisor({
+        config: params.config,
+        runId: params.runId,
+        sessionId: params.sessionId,
+        sessionKey: resolvedSessionKey,
+        agentId: workspaceResolution.agentId,
+        messageChannel: params.messageChannel,
+        messageProvider: params.messageProvider,
+        messageTo: params.messageTo,
+        agentAccountId: params.agentAccountId,
+        trigger: params.trigger,
+      });
+      const completeRunProgress = async (result: EmbeddedPiRunResult) => {
+        await runProgress.finish(resolveRunProgressFinishFromResult(result, Date.now() - started));
+        return result;
+      };
+      const onRunAssistantMessageStart = async () => {
+        runProgress.onAssistantMessageStart();
+        await params.onAssistantMessageStart?.();
+      };
+      const onRunAgentEvent = (event: { stream: string; data: Record<string, unknown> }) => {
+        runProgress.onAgentEvent(event);
+        params.onAgentEvent?.(event);
+      };
       try {
         let activeSessionId = params.sessionId;
         let activeSessionFile = params.sessionFile;
@@ -824,25 +867,27 @@ export async function runEmbeddedPiAgent(
               fallbackConfigured,
               failoverReason: lastRetryFailoverReason,
             });
-            return handleRetryLimitExhaustion({
-              message,
-              decision: retryLimitDecision,
-              provider,
-              model: modelId,
-              profileId: lastProfileId,
-              durationMs: Date.now() - started,
-              agentMeta: buildErrorAgentMeta({
-                sessionId: activeSessionId,
+            return await completeRunProgress(
+              handleRetryLimitExhaustion({
+                message,
+                decision: retryLimitDecision,
                 provider,
-                model: model.id,
-                contextTokens: ctxInfo.tokens,
-                usageAccumulator,
-                lastRunPromptUsage,
-                lastTurnTotal,
+                model: modelId,
+                profileId: lastProfileId,
+                durationMs: Date.now() - started,
+                agentMeta: buildErrorAgentMeta({
+                  sessionId: activeSessionId,
+                  provider,
+                  model: model.id,
+                  contextTokens: ctxInfo.tokens,
+                  usageAccumulator,
+                  lastRunPromptUsage,
+                  lastTurnTotal,
+                }),
+                replayInvalid: accumulatedReplayState.replayInvalid ? true : undefined,
+                livenessState: "blocked",
               }),
-              replayInvalid: accumulatedReplayState.replayInvalid ? true : undefined,
-              livenessState: "blocked",
-            });
+            );
           }
           runLoopIterations += 1;
           const runtimeAuthRetry = authRetryPending;
@@ -968,7 +1013,7 @@ export async function runEmbeddedPiAgent(
             shouldEmitToolResult: params.shouldEmitToolResult,
             shouldEmitToolOutput: params.shouldEmitToolOutput,
             onPartialReply: params.onPartialReply,
-            onAssistantMessageStart: params.onAssistantMessageStart,
+            onAssistantMessageStart: onRunAssistantMessageStart,
             onBlockReply: params.onBlockReply,
             onBlockReplyFlush: params.onBlockReplyFlush,
             blockReplyBreak: params.blockReplyBreak,
@@ -976,7 +1021,7 @@ export async function runEmbeddedPiAgent(
             onReasoningStream: params.onReasoningStream,
             onReasoningEnd: params.onReasoningEnd,
             onToolResult: params.onToolResult,
-            onAgentEvent: params.onAgentEvent,
+            onAgentEvent: onRunAgentEvent,
             extraSystemPrompt: params.extraSystemPrompt,
             sourceReplyDeliveryMode: params.sourceReplyDeliveryMode,
             inputProvenance: params.inputProvenance,
@@ -1454,7 +1499,7 @@ export async function runEmbeddedPiAgent(
               replayInvalid: resolveReplayInvalidForAttempt(),
               livenessState: "blocked",
             });
-            return {
+            return await completeRunProgress({
               payloads: [
                 {
                   text:
@@ -1481,7 +1526,7 @@ export async function runEmbeddedPiAgent(
                 livenessState: "blocked",
                 error: { kind, message: errorText },
               },
-            };
+            });
           }
 
           if (promptError && !aborted && promptErrorSource !== "compaction") {
@@ -1510,7 +1555,7 @@ export async function runEmbeddedPiAgent(
                 replayInvalid: resolveReplayInvalidForAttempt(),
                 livenessState: "blocked",
               });
-              return {
+              return await completeRunProgress({
                 payloads: [
                   {
                     text:
@@ -1537,7 +1582,7 @@ export async function runEmbeddedPiAgent(
                   livenessState: "blocked",
                   error: { kind: "role_ordering", message: errorText },
                 },
-              };
+              });
             }
             // Handle image size errors with a user-friendly message (no retry needed)
             const imageSizeError = parseImageSizeError(errorText);
@@ -1550,7 +1595,7 @@ export async function runEmbeddedPiAgent(
                 replayInvalid: resolveReplayInvalidForAttempt(),
                 livenessState: "blocked",
               });
-              return {
+              return await completeRunProgress({
                 payloads: [
                   {
                     text:
@@ -1577,7 +1622,7 @@ export async function runEmbeddedPiAgent(
                   livenessState: "blocked",
                   error: { kind: "image_size", message: errorText },
                 },
-              };
+              });
             }
             const promptFailoverReason =
               promptErrorDetails.reason ?? classifyFailoverReason(errorText, { provider });
@@ -1943,7 +1988,7 @@ export async function runEmbeddedPiAgent(
               replayInvalid,
               livenessState,
             });
-            return {
+            return await completeRunProgress({
               payloads: [
                 {
                   text: timeoutText,
@@ -1970,7 +2015,7 @@ export async function runEmbeddedPiAgent(
               messagingToolSentMediaUrls: attempt.messagingToolSentMediaUrls,
               messagingToolSentTargets: attempt.messagingToolSentTargets,
               successfulCronAdds: attempt.successfulCronAdds,
-            };
+            });
           }
 
           const silentToolResultReplyPayload = resolveSilentToolResultReplyPayload({
@@ -2135,7 +2180,7 @@ export async function runEmbeddedPiAgent(
               replayInvalid,
               livenessState,
             });
-            return {
+            return await completeRunProgress({
               payloads: [
                 {
                   text: STRICT_AGENTIC_BLOCKED_TEXT,
@@ -2162,7 +2207,7 @@ export async function runEmbeddedPiAgent(
               messagingToolSentMediaUrls: attempt.messagingToolSentMediaUrls,
               messagingToolSentTargets: attempt.messagingToolSentTargets,
               successfulCronAdds: attempt.successfulCronAdds,
-            };
+            });
           }
           if (reasoningOnlyRetriesExhausted && !finalAssistantVisibleText) {
             const replayInvalid = resolveReplayInvalidForAttempt(
@@ -2185,7 +2230,7 @@ export async function runEmbeddedPiAgent(
                 reason: resolveRunAuthProfileFailureReason(assistantFailoverReason),
               });
             }
-            return {
+            return await completeRunProgress({
               payloads: [
                 {
                   text: "⚠️ Agent couldn't generate a response. Please try again.",
@@ -2212,7 +2257,7 @@ export async function runEmbeddedPiAgent(
               messagingToolSentMediaUrls: attempt.messagingToolSentMediaUrls,
               messagingToolSentTargets: attempt.messagingToolSentTargets,
               successfulCronAdds: attempt.successfulCronAdds,
-            };
+            });
           }
           if (
             !nextPlanningOnlyRetryInstruction &&
@@ -2294,7 +2339,7 @@ export async function runEmbeddedPiAgent(
               });
             }
 
-            return {
+            return await completeRunProgress({
               payloads: [
                 {
                   text: incompleteTurnText,
@@ -2321,7 +2366,7 @@ export async function runEmbeddedPiAgent(
               messagingToolSentMediaUrls: attempt.messagingToolSentMediaUrls,
               messagingToolSentTargets: attempt.messagingToolSentTargets,
               successfulCronAdds: attempt.successfulCronAdds,
-            };
+            });
           }
 
           log.debug(
@@ -2364,7 +2409,7 @@ export async function runEmbeddedPiAgent(
             stopReason,
             yielded: attempt.yieldDetected === true,
           });
-          return {
+          return await completeRunProgress({
             payloads: terminalPayloads?.length ? terminalPayloads : undefined,
             ...(attempt.diagnosticTrace
               ? { diagnosticTrace: freezeDiagnosticTraceContext(attempt.diagnosticTrace) }
@@ -2440,9 +2485,17 @@ export async function runEmbeddedPiAgent(
             messagingToolSentMediaUrls: attempt.messagingToolSentMediaUrls,
             messagingToolSentTargets: attempt.messagingToolSentTargets,
             successfulCronAdds: attempt.successfulCronAdds,
-          };
+          });
         }
+      } catch (err) {
+        await runProgress.finish({
+          success: false,
+          error: formatErrorMessage(err),
+          durationMs: Date.now() - started,
+        });
+        throw err;
       } finally {
+        await runProgress.finish({ success: true, durationMs: Date.now() - started });
         forgetPromptBuildDrainCacheForRun(params.runId);
         await contextEngine.dispose?.();
         stopRuntimeAuthRefreshTimer();

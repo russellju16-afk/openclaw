@@ -424,6 +424,64 @@ describe("feishuPlugin actions", () => {
     );
   });
 
+  it("sends long task progress cards for runtime progress updates", async () => {
+    sendCardFeishuMock.mockResolvedValueOnce({ messageId: "om_progress", chatId: "oc_group_1" });
+
+    const result = await feishuPlugin.actions?.handleAction?.({
+      action: "send",
+      params: {
+        to: "chat:oc_group_1",
+        progressCard: {
+          title: "生成供应商对账单",
+          taskId: "run_123",
+          status: "running",
+          percent: 40,
+          summary: "正在拉取金蝶和本地单据。",
+          steps: [{ title: "读取供应商档案", status: "succeeded" }],
+        },
+      },
+      cfg,
+      accountId: undefined,
+      toolContext: {},
+    } as never);
+
+    expect(sendCardFeishuMock).toHaveBeenCalledWith({
+      cfg,
+      to: "chat:oc_group_1",
+      card: expect.objectContaining({
+        schema: "2.0",
+        config: expect.objectContaining({
+          update_multi: true,
+          width_mode: "fill",
+        }),
+        header: expect.objectContaining({
+          template: "blue",
+          title: { tag: "plain_text", content: "生成供应商对账单" },
+        }),
+        body: expect.objectContaining({
+          elements: expect.arrayContaining([
+            expect.objectContaining({ element_id: "md_progress" }),
+            expect.objectContaining({ element_id: "md_steps" }),
+          ]),
+        }),
+      }),
+      accountId: undefined,
+      replyToMessageId: undefined,
+      replyInThread: false,
+    });
+    expect(result?.details).toMatchObject({
+      ok: true,
+      messageId: "om_progress",
+      progressCard: {
+        title: "生成供应商对账单",
+        taskId: "run_123",
+        status: "running",
+        percent: 40,
+        stepCount: 1,
+      },
+    });
+  });
+
   it("sends media through the outbound adapter", async () => {
     feishuOutboundSendMediaMock.mockResolvedValueOnce({
       channel: "feishu",
@@ -543,6 +601,49 @@ describe("feishuPlugin actions", () => {
       accountId: undefined,
     });
     expect(result?.details).toMatchObject({ ok: true, messageId: "om_2", contentType: "post" });
+  });
+
+  it("edits messages with runtime progress cards", async () => {
+    editMessageFeishuMock.mockResolvedValueOnce({ messageId: "om_progress", contentType: "card" });
+
+    const result = await feishuPlugin.actions?.handleAction?.({
+      action: "edit",
+      params: {
+        messageId: "om_progress",
+        progressCard: {
+          title: "长任务",
+          status: "succeeded",
+          steps: [{ title: "完成", status: "succeeded" }],
+        },
+      },
+      cfg,
+      accountId: undefined,
+    } as never);
+
+    expect(editMessageFeishuMock).toHaveBeenCalledWith({
+      cfg,
+      messageId: "om_progress",
+      text: undefined,
+      card: expect.objectContaining({
+        schema: "2.0",
+        header: expect.objectContaining({
+          template: "green",
+          title: { tag: "plain_text", content: "长任务" },
+        }),
+      }),
+      accountId: undefined,
+    });
+    expect(result?.details).toMatchObject({
+      ok: true,
+      messageId: "om_progress",
+      contentType: "card",
+      progressCard: {
+        title: "长任务",
+        status: "succeeded",
+        percent: 100,
+        stepCount: 1,
+      },
+    });
   });
 
   it("sends explicit thread replies with reply_in_thread semantics", async () => {

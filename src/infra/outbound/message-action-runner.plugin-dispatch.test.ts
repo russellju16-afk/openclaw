@@ -852,6 +852,7 @@ describe("runMessageAction plugin dispatch", () => {
       jsonResult({
         ok: true,
         presentation: params.presentation ?? null,
+        progressCard: params.progressCard ?? null,
         message: params.message ?? null,
       }),
     );
@@ -922,6 +923,40 @@ describe("runMessageAction plugin dispatch", () => {
       expect(result.payload).toMatchObject({
         ok: true,
         presentation,
+      });
+    });
+
+    it("allows progress-card-only sends without text or media", async () => {
+      const cfg = {
+        channels: {
+          cardchat: {
+            enabled: true,
+          },
+        },
+      } as OpenClawConfig;
+
+      const progressCard = {
+        title: "Long task",
+        status: "running",
+      };
+
+      const result = await runMessageAction({
+        cfg,
+        action: "send",
+        params: {
+          channel: "cardchat",
+          target: "channel:test-progress-card",
+          progressCard,
+        },
+        dryRun: false,
+      });
+
+      expect(result.kind).toBe("send");
+      expect(result.handledBy).toBe("plugin");
+      expect(handleAction).toHaveBeenCalled();
+      expect(result.payload).toMatchObject({
+        ok: true,
+        progressCard,
       });
     });
   });

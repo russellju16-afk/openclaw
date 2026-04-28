@@ -532,10 +532,14 @@ async function handleSendAction(ctx: ResolvedActionContext): Promise<MessageActi
     readStringParam(params, "fileUrl", { trim: false });
   const hasPresentation = hasMessagePresentationBlocks(params.presentation);
   const hasInteractive = hasInteractiveReplyBlocks(params.interactive);
+  const hasProgressCard =
+    params.progressCard != null &&
+    typeof params.progressCard === "object" &&
+    !Array.isArray(params.progressCard);
   const caption = readStringParam(params, "caption", { allowEmpty: true }) ?? "";
   let message =
     readStringParam(params, "message", {
-      required: !mediaHint && !hasPresentation && !hasInteractive,
+      required: !mediaHint && !hasPresentation && !hasProgressCard && !hasInteractive,
       allowEmpty: true,
     }) ?? "";
   if (message.includes("\\n")) {
@@ -596,13 +600,18 @@ async function handleSendAction(ctx: ResolvedActionContext): Promise<MessageActi
 
   const mediaUrl = readStringParam(params, "media", { trim: false });
   if (
-    !hasReplyPayloadContent({
-      text: message,
-      mediaUrl,
-      mediaUrls: mergedMediaUrls,
-      presentation: params.presentation,
-      interactive: params.interactive,
-    })
+    !hasReplyPayloadContent(
+      {
+        text: message,
+        mediaUrl,
+        mediaUrls: mergedMediaUrls,
+        presentation: params.presentation,
+        interactive: params.interactive,
+      },
+      {
+        extraContent: hasProgressCard,
+      },
+    )
   ) {
     throw new Error("send requires text or media");
   }

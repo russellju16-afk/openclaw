@@ -172,6 +172,8 @@ export type EmbeddedPiRunResult = {
   // True if a messaging tool successfully sent a message.
   // Used to suppress agent's confirmation text.
   didSendViaMessagingTool?: boolean;
+  // True if runtime sent a deterministic approval prompt outside the model reply.
+  didSendDeterministicApprovalPrompt?: boolean;
   // Texts successfully sent via messaging tools during the run.
   messagingToolSentTexts?: string[];
   // Media URLs successfully sent via messaging tools during the run.

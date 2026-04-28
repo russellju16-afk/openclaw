@@ -37,6 +37,11 @@ import {
 } from "./accounts.js";
 import { feishuApprovalAuth } from "./approval-auth.js";
 import { FEISHU_CARD_INTERACTION_VERSION } from "./card-interaction.js";
+import {
+  createLongTaskProgressCard,
+  resolveFeishuLongTaskProgressCardPayload,
+  summarizeFeishuLongTaskProgressCard,
+} from "./card-ux-progress.js";
 import type {
   ChannelMessageActionName,
   ChannelMeta,
@@ -709,16 +714,22 @@ export const feishuPlugin: ChannelPlugin<ResolvedFeishuAccount, FeishuProbeResul
               throw new Error("Feishu thread-reply requires messageId.");
             }
             const presentation = normalizeMessagePresentation(ctx.params.presentation);
+            const progressCard = resolveFeishuLongTaskProgressCardPayload(ctx.params);
             const text = readFirstString(ctx.params, ["text", "message"]);
             const mediaUrl = readFeishuMediaParam(ctx.params);
             const audioAsVoice = readBooleanParam(ctx.params, ["asVoice", "audioAsVoice"]);
             const card = presentation
               ? buildFeishuPresentationCard({ presentation, fallbackText: text })
               : undefined;
-            if (card && mediaUrl) {
+            if (card && progressCard) {
+              throw new Error(
+                `Feishu ${ctx.action} accepts only one of presentation or progressCard.`,
+              );
+            }
+            if ((card || progressCard) && mediaUrl) {
               throw new Error(`Feishu ${ctx.action} does not support card with media.`);
             }
-            if (!card && !text && !mediaUrl) {
+            if (!card && !progressCard && !text && !mediaUrl) {
               throw new Error(`Feishu ${ctx.action} requires text/message, media, or card.`);
             }
             const runtime = await loadFeishuChannelRuntime();
@@ -738,6 +749,15 @@ export const feishuPlugin: ChannelPlugin<ResolvedFeishuAccount, FeishuProbeResul
                 cfg: ctx.cfg,
                 to,
                 card,
+                accountId: ctx.accountId ?? undefined,
+                replyToMessageId,
+                replyInThread: ctx.action === "thread-reply",
+              });
+            } else if (progressCard) {
+              result = await runtime.sendCardFeishu({
+                cfg: ctx.cfg,
+                to,
+                card: createLongTaskProgressCard(progressCard),
                 accountId: ctx.accountId ?? undefined,
                 replyToMessageId,
                 replyInThread: ctx.action === "thread-reply",
@@ -768,6 +788,9 @@ export const feishuPlugin: ChannelPlugin<ResolvedFeishuAccount, FeishuProbeResul
               channel: "feishu",
               action: ctx.action,
               ...result,
+              ...(progressCard
+                ? { progressCard: summarizeFeishuLongTaskProgressCard(progressCard) }
+                : {}),
             });
           }
 
@@ -809,12 +832,16 @@ export const feishuPlugin: ChannelPlugin<ResolvedFeishuAccount, FeishuProbeResul
               ctx.params.card && typeof ctx.params.card === "object"
                 ? (ctx.params.card as Record<string, unknown>)
                 : undefined;
+            const progressCard = resolveFeishuLongTaskProgressCardPayload(ctx.params);
+            if (card && progressCard) {
+              throw new Error("Feishu edit accepts only one of card or progressCard.");
+            }
             const { editMessageFeishu } = await loadFeishuChannelRuntime();
             const result = await editMessageFeishu({
               cfg: ctx.cfg,
               messageId,
               text,
-              card,
+              card: progressCard ? createLongTaskProgressCard(progressCard) : card,
               accountId: ctx.accountId ?? undefined,
             });
             return jsonActionResult({
@@ -822,6 +849,9 @@ export const feishuPlugin: ChannelPlugin<ResolvedFeishuAccount, FeishuProbeResul
               channel: "feishu",
               action: "edit",
               ...result,
+              ...(progressCard
+                ? { progressCard: summarizeFeishuLongTaskProgressCard(progressCard) }
+                : {}),
             });
           }
 
