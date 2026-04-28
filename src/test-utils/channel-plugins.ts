@@ -11,6 +11,7 @@ export type TestChannelRegistration = {
   pluginId: string;
   plugin: unknown;
   source: string;
+  rootDir?: string;
 };
 
 export const createTestRegistry = (channels: TestChannelRegistration[] = []): PluginRegistry => ({

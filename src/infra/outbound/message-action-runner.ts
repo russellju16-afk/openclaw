@@ -45,6 +45,13 @@ import {
   resolveMessageChannelSelection,
 } from "./channel-selection.js";
 import type { OutboundSendDeps } from "./deliver.js";
+import {
+  hasFeishuCardParam,
+  hasFeishuProgressCardParam,
+  isFeishuProgressCardChannel,
+  materializeFeishuProgressCardParams,
+  tryRunRegisteredFeishuCardUpdate,
+} from "./feishu-progress-card.js";
 import { normalizeMessageActionInput } from "./message-action-normalization.js";
 import {
   collectActionMediaSourceHints,
@@ -536,10 +543,11 @@ async function handleSendAction(ctx: ResolvedActionContext): Promise<MessageActi
     params.progressCard != null &&
     typeof params.progressCard === "object" &&
     !Array.isArray(params.progressCard);
+  const hasCard = isFeishuProgressCardChannel(channel) && hasFeishuCardParam(params);
   const caption = readStringParam(params, "caption", { allowEmpty: true }) ?? "";
   let message =
     readStringParam(params, "message", {
-      required: !mediaHint && !hasPresentation && !hasProgressCard && !hasInteractive,
+      required: !mediaHint && !hasPresentation && !hasProgressCard && !hasCard && !hasInteractive,
       allowEmpty: true,
     }) ?? "";
   if (message.includes("\\n")) {
@@ -609,7 +617,7 @@ async function handleSendAction(ctx: ResolvedActionContext): Promise<MessageActi
         interactive: params.interactive,
       },
       {
-        extraContent: hasProgressCard,
+        extraContent: hasProgressCard || hasCard,
       },
     )
   ) {
@@ -904,6 +912,24 @@ async function handlePluginAction(ctx: ResolvedActionContext): Promise<MessageAc
     dryRun,
   });
   if (!handled) {
+    const feishuCardUpdate = await tryRunRegisteredFeishuCardUpdate({
+      cfg,
+      channel,
+      action,
+      actionParams: params,
+      accountId,
+    });
+    if (feishuCardUpdate) {
+      return {
+        kind: "action",
+        channel,
+        action,
+        handledBy: "plugin",
+        payload: extractToolPayload(feishuCardUpdate),
+        toolResult: feishuCardUpdate,
+        dryRun,
+      };
+    }
     throw new Error(`Message action ${action} not supported for channel ${channel}.`);
   }
   return {
@@ -942,6 +968,13 @@ export async function runMessageAction(
   });
 
   const channel = await resolveChannel(cfg, params, input.toolContext);
+  if (
+    (action === "send" || action === "edit") &&
+    isFeishuProgressCardChannel(channel) &&
+    hasFeishuProgressCardParam(params)
+  ) {
+    materializeFeishuProgressCardParams(params);
+  }
   let accountId = readStringParam(params, "accountId") ?? input.defaultAccountId;
   if (!accountId && resolvedAgentId) {
     const byAgent = buildChannelAccountBindings(cfg).get(channel);

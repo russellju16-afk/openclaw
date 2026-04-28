@@ -1,3 +1,5 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { jsonResult } from "../../agents/tools/common.js";
@@ -14,6 +16,12 @@ import { runMessageAction } from "./message-action-runner.js";
 import { extractToolPayload } from "./tool-payload.js";
 
 type ChannelActionHandler = NonNullable<NonNullable<ChannelPlugin["actions"]>["handleAction"]>;
+type FeishuProgressUpdateCall = {
+  cfg: OpenClawConfig;
+  messageId: string;
+  card: Record<string, unknown>;
+  accountId?: string;
+};
 
 const mocks = vi.hoisted(() => ({
   resolveOutboundChannelPlugin: vi.fn(),
@@ -1291,6 +1299,182 @@ describe("runMessageAction plugin dispatch", () => {
       ).rejects.toThrow(/--presentation must be valid JSON/);
 
       expect(handleAction).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("Feishu progress card adapter", () => {
+    const handleAction = vi.fn(async ({ params }: { params: Record<string, unknown> }) =>
+      jsonResult({
+        ok: true,
+        messageId: "om_progress_1",
+        params,
+      }),
+    );
+    const feishuPlugin: ChannelPlugin = {
+      id: "feishu",
+      meta: {
+        id: "feishu",
+        label: "Feishu",
+        selectionLabel: "Feishu",
+        docsPath: "/channels/feishu",
+        blurb: "Feishu official plugin adapter test.",
+        aliases: ["lark"],
+      },
+      capabilities: { chatTypes: ["direct", "group"] },
+      config: createAlwaysConfiguredPluginConfig(),
+      messaging: {
+        targetResolver: {
+          looksLikeId: () => true,
+        },
+      },
+      actions: {
+        describeMessageTool: () => ({ actions: ["send"], capabilities: ["cards"] }),
+        supportsAction: ({ action }) => action === "send",
+        handleAction,
+      },
+    };
+
+    beforeEach(() => {
+      setActivePluginRegistry(
+        createTestRegistry([
+          {
+            pluginId: "openclaw-lark",
+            source: "test",
+            plugin: feishuPlugin,
+          },
+        ]),
+      );
+      handleAction.mockClear();
+    });
+
+    afterEach(() => {
+      setActivePluginRegistry(createTestRegistry([]));
+      vi.clearAllMocks();
+      const globalForTest = globalThis as typeof globalThis & {
+        __openclawFeishuProgressCardUpdateCalls?: FeishuProgressUpdateCall[];
+      };
+      delete globalForTest.__openclawFeishuProgressCardUpdateCalls;
+    });
+
+    it("materializes progressCard into the official plugin card param for send", async () => {
+      const result = await runMessageAction({
+        cfg: {
+          channels: {
+            feishu: {
+              enabled: true,
+            },
+          },
+        } as OpenClawConfig,
+        action: "send",
+        params: {
+          channel: "feishu",
+          target: "chat:oc_group_1",
+          progressCard: {
+            title: "长任务",
+            taskId: "run-1",
+            status: "running",
+            progress: 40,
+          },
+        },
+        dryRun: false,
+      });
+
+      expect(result).toMatchObject({
+        kind: "send",
+        channel: "feishu",
+        handledBy: "plugin",
+      });
+      expect(handleAction).toHaveBeenCalled();
+      const pluginParams = handleAction.mock.calls[0]?.[0]?.params as
+        | Record<string, unknown>
+        | undefined;
+      expect(pluginParams?.progressCard).toBeUndefined();
+      expect(pluginParams?.card).toMatchObject({
+        schema: "2.0",
+        config: expect.objectContaining({
+          update_multi: true,
+          width_mode: "fill",
+        }),
+        body: expect.objectContaining({
+          elements: expect.any(Array),
+        }),
+      });
+    });
+
+    it("uses the official plugin updateCardFeishu export when edit is not advertised", async () => {
+      const rootDir = mkdtempSync(path.join(os.tmpdir(), "openclaw-lark-progress-"));
+      writeFileSync(
+        path.join(rootDir, "index.js"),
+        [
+          "globalThis.__openclawFeishuProgressCardUpdateCalls =",
+          "  globalThis.__openclawFeishuProgressCardUpdateCalls || [];",
+          "exports.updateCardFeishu = async (params) => {",
+          "  globalThis.__openclawFeishuProgressCardUpdateCalls.push(params);",
+          "};",
+        ].join("\n"),
+      );
+      setActivePluginRegistry(
+        createTestRegistry([
+          {
+            pluginId: "openclaw-lark",
+            source: "test",
+            plugin: feishuPlugin,
+            rootDir,
+          },
+        ]),
+      );
+
+      try {
+        const result = await runMessageAction({
+          cfg: {
+            channels: {
+              feishu: {
+                enabled: true,
+              },
+            },
+          } as OpenClawConfig,
+          action: "edit",
+          params: {
+            channel: "feishu",
+            messageId: "om_progress_1",
+            accountId: "laicai",
+            progressCard: {
+              title: "长任务",
+              taskId: "run-1",
+              status: "succeeded",
+            },
+          },
+          dryRun: false,
+        });
+
+        const globalForTest = globalThis as typeof globalThis & {
+          __openclawFeishuProgressCardUpdateCalls?: FeishuProgressUpdateCall[];
+        };
+        expect(result).toMatchObject({
+          kind: "action",
+          channel: "feishu",
+          action: "edit",
+          handledBy: "plugin",
+          payload: {
+            ok: true,
+            messageId: "om_progress_1",
+          },
+        });
+        expect(globalForTest.__openclawFeishuProgressCardUpdateCalls).toHaveLength(1);
+        expect(globalForTest.__openclawFeishuProgressCardUpdateCalls?.[0]).toMatchObject({
+          messageId: "om_progress_1",
+          accountId: "laicai",
+          card: {
+            schema: "2.0",
+            header: expect.objectContaining({
+              template: "green",
+            }),
+          },
+        });
+        expect(handleAction).not.toHaveBeenCalled();
+      } finally {
+        rmSync(rootDir, { recursive: true, force: true });
+      }
     });
   });
 
